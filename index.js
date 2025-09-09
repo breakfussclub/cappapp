@@ -8,13 +8,13 @@ const client = new Client({
 
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}!`);
-  client.user.setActivity("💡 Minimal heartbeat bot"); // optional
+  client.user.setActivity("💡 Watching Rishi & Poit"); // optional
 });
 
 // simple ping/pong to keep it responsive
 client.on("messageCreate", (message) => {
-  if (message.content === "!ping") {
-    message.reply("Pong!");
+  if (message.content === "!cap") {
+    message.reply("...coming soon :nerd:");
   }
 });
 
