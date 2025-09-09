@@ -25,7 +25,7 @@ client.on("messageCreate", async (message) => {
     }
 
     // Dummy response for now
-    message.reply(`🧐 Fact-checking: "${statement}"\n✅ ⏳ API connection is still in progress. Please be patient.`);
+    message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ API connection is still in progress. Please be patient.`);
   }
 });
 
