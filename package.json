@@ -1,15 +1,14 @@
 {
   "name": "truthsync",
   "version": "1.0.0",
-  "description": "Discord fact-checking bot",
+  "description": "Fact-checking Discord bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.0",
-    "dotenv": "^16.3.1",
-    "openai": "^4.9.0",
-    "express": "^4.18.2"
+    "discord.js": "^14.0.0",
+    "openai": "4.27.0",
+    "dotenv": "^16.0.0"
   }
 }
