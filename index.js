@@ -9,7 +9,7 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
   client.user.setPresence({
     activities: [{ name: "👀 Rishi & Poit", type: 3 }], // Watching
-    status: "busy",
+    status: "do not disturb",
   });
 });
 
@@ -25,7 +25,7 @@ client.on("messageCreate", async (message) => {
     }
 
     // Dummy response for now
-    message.reply(`🧐 Fact-checking: "${statement}"\n\n✅ This is just a placeholder response until AI integration is added.`);
+    message.reply(`🧐 Fact-checking: "${statement}"\n✅ ⏳ API connection is still in progress. Please be patient.`);
   }
 });
 
