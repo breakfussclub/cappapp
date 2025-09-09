@@ -44,7 +44,7 @@ function ratingColor(rating) {
 }
 
 // ------------------------
-// Fact-check function
+// Fact-check function (Google API)
 // ------------------------
 async function factCheck(statement) {
   const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(statement)}&key=${API_KEY}`;
@@ -54,7 +54,7 @@ async function factCheck(statement) {
     const data = await response.json();
     const claims = data.claims || [];
 
-    if (claims.length === 0) return { error: "❌ No fact-checks found. Try a more specific statement." };
+    if (claims.length === 0) return { results: [] };
 
     const results = [];
     claims.forEach(claim => {
@@ -74,6 +74,29 @@ async function factCheck(statement) {
     console.error(error);
     return { error: "⚠️ An error occurred while contacting the Fact Check API." };
   }
+}
+
+// ------------------------
+// Wikipedia helper (JSON REST API fallback)
+// ------------------------
+async function wikipediaSummary(query) {
+  try {
+    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+
+    if (data.extract) {
+      return {
+        title: data.title,
+        extract: data.extract,
+        url: data.content_urls.desktop.page
+      };
+    }
+  } catch (err) {
+    console.error("Wikipedia fetch error:", err);
+  }
+  return null;
 }
 
 // ------------------------
@@ -100,9 +123,7 @@ client.on("messageCreate", async (message) => {
   if (message.reference) {
     try {
       const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
-      if (repliedMessage) {
-        statement = repliedMessage.content.trim();
-      }
+      if (repliedMessage) statement = repliedMessage.content.trim();
     } catch (err) {
       console.error("Failed to fetch replied-to message:", err);
     }
@@ -120,10 +141,30 @@ client.on("messageCreate", async (message) => {
   // Initial "thinking..." message
   const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
 
+  // Check Google Fact Check API
   const { results, error } = await factCheck(statement);
 
   if (error) {
     await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
+    return;
+  }
+
+  if (!results || results.length === 0) {
+    // Fallback: Wikipedia
+    const wiki = await wikipediaSummary(statement);
+    if (wiki) {
+      const embed = new EmbedBuilder()
+        .setColor(0x808080)
+        .setTitle(`Wikipedia: ${wiki.title}`)
+        .setDescription(wiki.extract)
+        .setURL(wiki.url)
+        .setTimestamp();
+      await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"\n\nNo official fact-checks found. Showing Wikipedia summary instead:`, embeds: [embed] });
+      return;
+    }
+
+    // Still nothing
+    await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n❌ No fact-checks or Wikipedia summary found.`);
     return;
   }
 
@@ -173,9 +214,7 @@ client.on("messageCreate", async (message) => {
   collector.on("collect", async i => {
     if (i.customId === "next") index++;
     if (i.customId === "prev") index--;
-    if (i.customId === "quick") {
-      index = 0;
-    }
+    if (i.customId === "quick") index = 0;
 
     row.components[0].setDisabled(index === 0);
     row.components[1].setDisabled(index === pages.length - 1);
