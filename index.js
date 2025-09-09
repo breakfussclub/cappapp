@@ -58,66 +58,84 @@ async function factCheck(statement) {
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  if (message.content.startsWith("!cap")) {
-    const statement = message.content.slice(4).trim();
+  // Only trigger on !cap prefix
+  if (!message.content.startsWith("!cap")) return;
 
-    if (!statement) {
-      return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
+  let statement = null;
+
+  // If replying to a message, use the original message content
+  if (message.reference) {
+    try {
+      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      if (repliedMessage) {
+        statement = repliedMessage.content.trim();
+      }
+    } catch (err) {
+      console.error("Failed to fetch replied-to message:", err);
     }
-
-    // Initial "thinking..." message
-    const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
-
-    const { results, error } = await factCheck(statement);
-
-    if (error) {
-      await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
-      return;
-    }
-
-    // Pagination setup
-    let index = 0;
-
-    const generateEmbed = (idx) => {
-      const r = results[idx];
-      return new EmbedBuilder()
-        .setColor("#0099ff")
-        .setTitle(`Fact-Check Result ${idx + 1}/${results.length}`)
-        .addFields(
-          { name: "Claim", value: r.claim },
-          { name: "Rating", value: r.rating, inline: true },
-          { name: "Publisher", value: r.publisher, inline: true },
-          { name: "Source", value: `[Link](${r.url})` }
-        )
-        .setTimestamp();
-    };
-
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
-        new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(results.length === 1)
-      );
-
-    const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
-
-    // Collector for buttons (any user can interact)
-    const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
-
-    collector.on("collect", async i => {
-      if (i.customId === "next") index++;
-      if (i.customId === "prev") index--;
-
-      row.components[0].setDisabled(index === 0);
-      row.components[1].setDisabled(index === results.length - 1);
-
-      await i.update({ embeds: [generateEmbed(index)], components: [row] });
-    });
-
-    collector.on("end", async () => {
-      row.components.forEach(button => button.setDisabled(true));
-      await msg.edit({ components: [row] });
-    });
   }
+
+  // If not a reply or failed to fetch, use the rest of the message
+  if (!statement) {
+    statement = message.content.slice(4).trim();
+  }
+
+  if (!statement) {
+    return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
+  }
+
+  // Initial "thinking..." message
+  const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
+
+  const { results, error } = await factCheck(statement);
+
+  if (error) {
+    await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
+    return;
+  }
+
+  // Pagination setup
+  let index = 0;
+
+  const generateEmbed = (idx) => {
+    const r = results[idx];
+    return new EmbedBuilder()
+      .setColor("#0099ff")
+      .setTitle(`Fact-Check Result ${idx + 1}/${results.length}`)
+      .addFields(
+        { name: "Claim", value: r.claim },
+        { name: "Rating", value: r.rating, inline: true },
+        { name: "Publisher", value: r.publisher, inline: true },
+        { name: "Source", value: `[Link](${r.url})` }
+      )
+      .setTimestamp();
+  };
+
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
+      new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(results.length === 1)
+    );
+
+  const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
+
+  // Collector for buttons (any user can interact)
+  const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
+
+  collector.on("collect", async i => {
+    if (i.customId === "next") index++;
+    if (i.customId === "prev") index--;
+
+    row.components[0].setDisabled(index === 0);
+    row.components[1].setDisabled(index === results.length - 1);
+
+    await i.update({ embeds: [generateEmbed(index)], components: [row] });
+  });
+
+  collector.on("end", async () => {
+    row.components.forEach(button => button.setDisabled(true));
+    await msg.edit({ components: [row] });
+  });
 });
 
 // ------------------------
@@ -127,7 +145,7 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
   client.user.setPresence({
     activities: [{ name: "👀 Rishi & Poit", type: 3 }],
-    status: "dnd",
+    status: "online",
   });
 });
 
@@ -146,4 +164,3 @@ http.createServer((req, res) => {
 }).listen(PORT, () => {
   console.log(`Listening on port ${PORT}`);
 });
-
