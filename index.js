@@ -1,5 +1,5 @@
-const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require("discord.js");
-const fetch = require("node-fetch");
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require("discord.js");
+const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
 
 const client = new Client({
@@ -10,35 +10,8 @@ const client = new Client({
   ]
 });
 
+// Hard-coded Google Fact Check API key
 const API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
-
-// ------------------------
-// Register slash command
-// ------------------------
-const commands = [
-  new SlashCommandBuilder()
-    .setName("factcheck")
-    .setDescription("Fact-check a statement using Google Fact Check Tools")
-    .addStringOption(option =>
-      option.setName("statement")
-        .setDescription("The statement to fact-check")
-        .setRequired(true))
-].map(cmd => cmd.toJSON());
-
-const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
-
-(async () => {
-  try {
-    console.log("Registering slash commands...");
-    await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: commands }
-    );
-    console.log("Slash commands registered successfully.");
-  } catch (error) {
-    console.error("Error registering slash commands:", error);
-  }
-})();
 
 // ------------------------
 // Helper: truncate text
@@ -80,64 +53,71 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Slash command handler with pagination
+// Message handler (!cap prefix)
 // ------------------------
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isCommand()) return;
-  if (interaction.commandName !== "factcheck") return;
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
 
-  const statement = interaction.options.getString("statement");
-  await interaction.deferReply();
+  if (message.content.startsWith("!cap")) {
+    const statement = message.content.slice(4).trim();
 
-  const { results, error } = await factCheck(statement);
-
-  if (error) return interaction.editReply(error);
-
-  let index = 0;
-
-  const generateEmbed = (idx) => {
-    const r = results[idx];
-    return new EmbedBuilder()
-      .setColor("#0099ff")
-      .setTitle(`Fact-Check Result ${idx + 1}/${results.length}`)
-      .addFields(
-        { name: "Claim", value: r.claim },
-        { name: "Rating", value: r.rating, inline: true },
-        { name: "Publisher", value: r.publisher, inline: true },
-        { name: "Source", value: `[Link](${r.url})` }
-      )
-      .setTimestamp();
-  };
-
-  const row = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
-      new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(results.length === 1)
-    );
-
-  const message = await interaction.editReply({ embeds: [generateEmbed(index)], components: [row] });
-
-  const collector = message.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
-
-  collector.on("collect", async i => {
-    if (i.user.id !== interaction.user.id) {
-      return i.reply({ content: "You cannot interact with this button.", ephemeral: true });
+    if (!statement) {
+      return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
     }
 
-    if (i.customId === "next") index++;
-    if (i.customId === "prev") index--;
+    // Initial "thinking..." message
+    const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
 
-    // update buttons
-    row.components[0].setDisabled(index === 0);
-    row.components[1].setDisabled(index === results.length - 1);
+    const { results, error } = await factCheck(statement);
 
-    await i.update({ embeds: [generateEmbed(index)], components: [row] });
-  });
+    if (error) {
+      await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
+      return;
+    }
 
-  collector.on("end", async () => {
-    row.components.forEach(button => button.setDisabled(true));
-    await message.edit({ components: [row] });
-  });
+    // Pagination setup
+    let index = 0;
+
+    const generateEmbed = (idx) => {
+      const r = results[idx];
+      return new EmbedBuilder()
+        .setColor("#0099ff")
+        .setTitle(`Fact-Check Result ${idx + 1}/${results.length}`)
+        .addFields(
+          { name: "Claim", value: r.claim },
+          { name: "Rating", value: r.rating, inline: true },
+          { name: "Publisher", value: r.publisher, inline: true },
+          { name: "Source", value: `[Link](${r.url})` }
+        )
+        .setTimestamp();
+    };
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
+        new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(results.length === 1)
+      );
+
+    const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
+
+    // Collector for buttons (any user can interact)
+    const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
+
+    collector.on("collect", async i => {
+      if (i.customId === "next") index++;
+      if (i.customId === "prev") index--;
+
+      row.components[0].setDisabled(index === 0);
+      row.components[1].setDisabled(index === results.length - 1);
+
+      await i.update({ embeds: [generateEmbed(index)], components: [row] });
+    });
+
+    collector.on("end", async () => {
+      row.components.forEach(button => button.setDisabled(true));
+      await msg.edit({ components: [row] });
+    });
+  }
 });
 
 // ------------------------
@@ -151,6 +131,9 @@ client.once("ready", () => {
   });
 });
 
+// ------------------------
+// Discord login
+// ------------------------
 client.login(process.env.DISCORD_TOKEN);
 
 // ------------------------
@@ -163,15 +146,4 @@ http.createServer((req, res) => {
 }).listen(PORT, () => {
   console.log(`Listening on port ${PORT}`);
 });
-
-
-
-
-
-
-
-
-
-
-
 
