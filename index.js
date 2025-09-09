@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
+const http = require("http"); // dummy server for Render
 
 const client = new Client({
   intents: [
@@ -29,6 +30,8 @@ async function factCheck(statement) {
     if (!response.ok) return { error: `⚠️ Error contacting Fact Check API: ${response.status}` };
 
     const data = await response.json();
+    console.log("API response:", JSON.stringify(data, null, 2)); // optional: debug logs
+
     const claims = data.claims || [];
 
     if (claims.length === 0) return { error: "❌ No fact-checks found." };
@@ -62,7 +65,6 @@ client.on("messageCreate", async (message) => {
       return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
     }
 
-    // Temporary "checking" message
     const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
 
     const { results, error } = await factCheck(statement);
@@ -72,7 +74,6 @@ client.on("messageCreate", async (message) => {
       return;
     }
 
-    // Create embeds for each result
     const embeds = results.map(r => new EmbedBuilder()
       .setColor("#0099ff")
       .setTitle("Fact-Check Result")
@@ -91,6 +92,19 @@ client.on("messageCreate", async (message) => {
 
 // Login using Discord token from Render environment variable
 client.login(process.env.DISCORD_TOKEN);
+
+// -----------------------
+// Dummy HTTP server for Render
+// -----------------------
+const PORT = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Bot is running!");
+}).listen(PORT, () => {
+  console.log(`Listening on port ${PORT}`);
+});
+
 
 
 
