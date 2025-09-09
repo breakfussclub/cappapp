@@ -1,34 +1,25 @@
 // index.js
-const OpenAI = require("openai");
+const { Client, GatewayIntentBits } = require("discord.js");
 
-// Make sure you set this in Render: Environment → OPENAI_API_KEY
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+// Make sure you set this in Render: Environment → DISCORD_TOKEN
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
 });
 
-async function runTest() {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a helpful assistant." },
-        { role: "user", content: "Hello, world!" },
-      ],
-    });
+client.once("ready", () => {
+  console.log(`Logged in as ${client.user.tag}!`);
+  client.user.setActivity("💡 Minimal heartbeat bot"); // optional
+});
 
-    console.log("AI Response:", response.choices[0].message.content);
-  } catch (err) {
-    if (err.code === "insufficient_quota") {
-      console.error(
-        "OpenAI quota exceeded. Please check your plan or API key."
-      );
-    } else {
-      console.error("Error calling OpenAI:", err);
-    }
+// simple ping/pong to keep it responsive
+client.on("messageCreate", (message) => {
+  if (message.content === "!ping") {
+    message.reply("Pong!");
   }
-}
+});
 
-runTest();
+client.login(process.env.DISCORD_TOKEN);
+
 
 
 
