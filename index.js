@@ -1,23 +1,36 @@
-const fs = require("fs");
+const { Client, GatewayIntentBits } = require("discord.js");
+require("dotenv").config();
 
-// Load facts from JSON file
-const facts = JSON.parse(fs.readFileSync("./facts.json", "utf8"));
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+});
 
-client.on("messageCreate", (message) => {
+client.once("ready", () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  client.user.setPresence({
+    activities: [{ name: "👀 Rishi & Poit", type: 3 }], // Watching
+    status: "busy",
+  });
+});
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+
+  // Look for messages starting with !cap
   if (message.content.startsWith("!cap")) {
-    const userStatement = message.content.slice(4).trim();
-    if (!userStatement) {
-      return message.reply("⚠️ Please provide a statement after `!cap`.");
+    const statement = message.content.slice(4).trim(); // remove "!cap"
+
+    if (!statement) {
+      return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
     }
 
-    // Pick random fact
-    const randomFact = facts[Math.floor(Math.random() * facts.length)];
-
-    message.reply(
-      `🔎 You asked me to fact-check: "${userStatement}"\n\n✅ ${randomFact}`
-    );
+    // Dummy response for now
+    message.reply(`🧐 Fact-checking: "${statement}"\n\n✅ This is just a placeholder response until AI integration is added.`);
   }
 });
+
+client.login(process.env.DISCORD_TOKEN);
+
 
 
 
