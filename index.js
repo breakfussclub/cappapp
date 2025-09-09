@@ -195,8 +195,8 @@ client.on("messageCreate", async (message) => {
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
   client.user.setPresence({
-    activities: [{ name: "👀 Rishi & Poit", type: 3 }],
-    status: "dnd",
+    activities: [{ name: "👀 Rishi & Sav", type: 3 }],
+    status: "online",
   });
 });
 
