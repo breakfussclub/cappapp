@@ -6,7 +6,6 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-// Use your OpenAI API key from Render environment variables
 const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY
 });
@@ -37,5 +36,6 @@ client.on('messageCreate', async (message) => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
 
 
