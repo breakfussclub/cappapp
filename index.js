@@ -2,6 +2,9 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
 
+// ------------------------
+// CONFIG
+// ------------------------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -13,11 +16,31 @@ const client = new Client({
 // Hard-coded Google Fact Check API key
 const API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
 
+// Rate limiting: userId -> timestamp
+const cooldowns = {};
+const COOLDOWN_SECONDS = 10;
+
+// Command aliases
+const COMMANDS = ["!cap", "!fact", "!verify"];
+
 // ------------------------
-// Helper: truncate text
+// Helper: truncate / split text
 // ------------------------
-function truncate(text, maxLength = 1000) {
-  return text.length > maxLength ? text.slice(0, maxLength - 3) + "..." : text;
+function splitText(text, maxLength = 1000) {
+  const parts = [];
+  for (let i = 0; i < text.length; i += maxLength) {
+    parts.push(text.slice(i, i + maxLength));
+  }
+  return parts;
+}
+
+// Map rating to embed color
+function ratingColor(rating) {
+  if (!rating) return 0x808080; // gray for unknown
+  const r = rating.toLowerCase();
+  if (r.includes("true")) return 0x00ff00; // green
+  if (r.includes("false")) return 0xff0000; // red
+  return 0xffff00; // yellow for partially true/misleading
 }
 
 // ------------------------
@@ -37,10 +60,11 @@ async function factCheck(statement) {
     claims.forEach(claim => {
       claim.claimReview.forEach(review => {
         results.push({
-          claim: truncate(claim.text),
+          claim: claim.text,
           rating: review.textualRating || "Unknown",
           publisher: review.publisher.name,
-          url: review.url
+          url: review.url,
+          date: review.publishDate || "Unknown"
         });
       });
     });
@@ -53,17 +77,26 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Message handler (!cap prefix)
+// Message handler
 // ------------------------
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  // Only trigger on !cap prefix
-  if (!message.content.startsWith("!cap")) return;
+  // Check if message starts with any of the aliases
+  const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
+  if (!command) return;
 
+  // Rate limiting
+  const now = Date.now();
+  if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
+    return message.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
+  }
+  cooldowns[message.author.id] = now;
+
+  // Determine statement
   let statement = null;
 
-  // If replying to a message, use the original message content
+  // If replying, use replied message content
   if (message.reference) {
     try {
       const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -75,9 +108,9 @@ client.on("messageCreate", async (message) => {
     }
   }
 
-  // If not a reply or failed to fetch, use the rest of the message
+  // If no reply or failed to fetch, use message after command
   if (!statement) {
-    statement = message.content.slice(4).trim();
+    statement = message.content.slice(command.length).trim();
   }
 
   if (!statement) {
@@ -94,40 +127,58 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  // Pagination setup
-  let index = 0;
+  // Split long claims into pages if needed
+  const pages = [];
+  results.forEach(r => {
+    const parts = splitText(r.claim, 1000); // 1000 chars per page
+    parts.forEach(p => {
+      pages.push({
+        claim: p,
+        rating: r.rating,
+        publisher: r.publisher,
+        url: r.url,
+        date: r.date
+      });
+    });
+  });
 
+  let index = 0;
   const generateEmbed = (idx) => {
-    const r = results[idx];
+    const r = pages[idx];
     return new EmbedBuilder()
-      .setColor("#0099ff")
-      .setTitle(`Fact-Check Result ${idx + 1}/${results.length}`)
+      .setColor(ratingColor(r.rating))
+      .setTitle(`Fact-Check Result ${idx + 1}/${pages.length}`)
       .addFields(
-        { name: "Claim", value: r.claim },
+        { name: "Claim", value: `> ${r.claim}` },
         { name: "Rating", value: r.rating, inline: true },
         { name: "Publisher", value: r.publisher, inline: true },
-        { name: "Source", value: `[Link](${r.url})` }
+        { name: "Source", value: `[Link](${r.url})` },
+        { name: "Reviewed Date", value: r.date, inline: true }
       )
       .setTimestamp();
   };
 
+  // Pagination buttons
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
-      new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(results.length === 1)
+      new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(pages.length === 1),
+      new ButtonBuilder().setCustomId("quick").setLabel("🔄 Quick Search").setStyle(ButtonStyle.Secondary)
     );
 
   const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
 
-  // Collector for buttons (any user can interact)
   const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
 
   collector.on("collect", async i => {
     if (i.customId === "next") index++;
     if (i.customId === "prev") index--;
+    if (i.customId === "quick") {
+      index = 0;
+    }
 
     row.components[0].setDisabled(index === 0);
-    row.components[1].setDisabled(index === results.length - 1);
+    row.components[1].setDisabled(index === pages.length - 1);
 
     await i.update({ embeds: [generateEmbed(index)], components: [row] });
   });
@@ -145,7 +196,7 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
   client.user.setPresence({
     activities: [{ name: "👀 Rishi & Poit", type: 3 }],
-    status: "online",
+    status: "dnd",
   });
 });
 
