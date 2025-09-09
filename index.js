@@ -1,6 +1,6 @@
-const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
-const fetch = require("node-fetch"); // npm install node-fetch@2
-const http = require("http"); // dummy server for Render
+const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require("discord.js");
+const fetch = require("node-fetch");
+const http = require("http");
 
 const client = new Client({
   intents: [
@@ -10,37 +10,61 @@ const client = new Client({
   ]
 });
 
-// Hard-coded Google Fact Check API key
 const API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
 
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  client.user.setPresence({
-    activities: [{ name: "👀 Rishi & Poit", type: 3 }],
-    status: "dnd",
-  });
-});
+// ------------------------
+// Register slash command
+// ------------------------
+const commands = [
+  new SlashCommandBuilder()
+    .setName("factcheck")
+    .setDescription("Fact-check a statement using Google Fact Check Tools")
+    .addStringOption(option =>
+      option.setName("statement")
+        .setDescription("The statement to fact-check")
+        .setRequired(true))
+].map(cmd => cmd.toJSON());
 
-// Function to query Google Fact Check Tools API
+const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+
+(async () => {
+  try {
+    console.log("Registering slash commands...");
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands }
+    );
+    console.log("Slash commands registered successfully.");
+  } catch (error) {
+    console.error("Error registering slash commands:", error);
+  }
+})();
+
+// ------------------------
+// Helper: truncate text
+// ------------------------
+function truncate(text, maxLength = 1000) {
+  return text.length > maxLength ? text.slice(0, maxLength - 3) + "..." : text;
+}
+
+// ------------------------
+// Fact-check function
+// ------------------------
 async function factCheck(statement) {
   const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(statement)}&key=${API_KEY}`;
-
   try {
     const response = await fetch(url);
     if (!response.ok) return { error: `⚠️ Error contacting Fact Check API: ${response.status}` };
-
     const data = await response.json();
-    console.log("API response:", JSON.stringify(data, null, 2)); // optional: debug logs
-
     const claims = data.claims || [];
 
-    if (claims.length === 0) return { error: "❌ No fact-checks found." };
+    if (claims.length === 0) return { error: "❌ No fact-checks found. Try a more specific statement." };
 
     const results = [];
-    claims.slice(0, 3).forEach(claim => {
+    claims.forEach(claim => {
       claim.claimReview.forEach(review => {
         results.push({
-          claim: claim.text,
+          claim: truncate(claim.text),
           rating: review.textualRating || "Unknown",
           publisher: review.publisher.name,
           url: review.url
@@ -55,55 +79,91 @@ async function factCheck(statement) {
   }
 }
 
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
+// ------------------------
+// Slash command handler with pagination
+// ------------------------
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isCommand()) return;
+  if (interaction.commandName !== "factcheck") return;
 
-  if (message.content.startsWith("!cap")) {
-    const statement = message.content.slice(4).trim();
+  const statement = interaction.options.getString("statement");
+  await interaction.deferReply();
 
-    if (!statement) {
-      return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
-    }
+  const { results, error } = await factCheck(statement);
 
-    const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
+  if (error) return interaction.editReply(error);
 
-    const { results, error } = await factCheck(statement);
+  let index = 0;
 
-    if (error) {
-      await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
-      return;
-    }
-
-    const embeds = results.map(r => new EmbedBuilder()
+  const generateEmbed = (idx) => {
+    const r = results[idx];
+    return new EmbedBuilder()
       .setColor("#0099ff")
-      .setTitle("Fact-Check Result")
+      .setTitle(`Fact-Check Result ${idx + 1}/${results.length}`)
       .addFields(
         { name: "Claim", value: r.claim },
         { name: "Rating", value: r.rating, inline: true },
         { name: "Publisher", value: r.publisher, inline: true },
         { name: "Source", value: `[Link](${r.url})` }
       )
-      .setTimestamp()
+      .setTimestamp();
+  };
+
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
+      new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(results.length === 1)
     );
 
-    await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds });
-  }
+  const message = await interaction.editReply({ embeds: [generateEmbed(index)], components: [row] });
+
+  const collector = message.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
+
+  collector.on("collect", async i => {
+    if (i.user.id !== interaction.user.id) {
+      return i.reply({ content: "You cannot interact with this button.", ephemeral: true });
+    }
+
+    if (i.customId === "next") index++;
+    if (i.customId === "prev") index--;
+
+    // update buttons
+    row.components[0].setDisabled(index === 0);
+    row.components[1].setDisabled(index === results.length - 1);
+
+    await i.update({ embeds: [generateEmbed(index)], components: [row] });
+  });
+
+  collector.on("end", async () => {
+    row.components.forEach(button => button.setDisabled(true));
+    await message.edit({ components: [row] });
+  });
 });
 
-// Login using Discord token from Render environment variable
+// ------------------------
+// Bot ready
+// ------------------------
+client.once("ready", () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  client.user.setPresence({
+    activities: [{ name: "👀 Rishi & Poit", type: 3 }],
+    status: "dnd",
+  });
+});
+
 client.login(process.env.DISCORD_TOKEN);
 
-// -----------------------
+// ------------------------
 // Dummy HTTP server for Render
-// -----------------------
+// ------------------------
 const PORT = process.env.PORT || 3000;
-
 http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
   res.end("Bot is running!");
 }).listen(PORT, () => {
   console.log(`Listening on port ${PORT}`);
 });
+
 
 
 
