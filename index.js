@@ -1,5 +1,5 @@
 // index.js
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, ActivityType } = require("discord.js");
 
 // Make sure you set this in Render: Environment → DISCORD_TOKEN
 const client = new Client({
@@ -8,17 +8,19 @@ const client = new Client({
 
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}!`);
-  client.user.setActivity("💡 Watching Rishi & Poit"); // optional
+  
+  // Set status as :eyes: Watching Rishi & Poit
+  client.user.setActivity("Rishi & Poit", { type: ActivityType.Watching });
 });
 
-// simple ping/pong to keep it responsive
 client.on("messageCreate", (message) => {
-  if (message.content === "!cap") {
-    message.reply("...coming soon :nerd:");
+  if (message.content === "!ping") {
+    message.reply("Pong!");
   }
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
 
 
 
