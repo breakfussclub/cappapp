@@ -1,41 +1,32 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
-const { Configuration, OpenAIApi } = require('openai');
+// index.js
+import OpenAI from "openai";
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
-});
+// Make sure your API key is set as an environment variable in Render:
+// OPENAI_API_KEY
 
-const configuration = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
-const openai = new OpenAIApi(configuration);
 
-client.once('ready', () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-});
+// Example function to test the client
+async function runTest() {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "Hello, world!" }
+      ]
+    });
 
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-
-  if (message.content.startsWith('!fact ')) {
-    const question = message.content.slice(6);
-
-    try {
-      const response = await openai.createChatCompletion({
-        model: "gpt-4",
-        messages: [{ role: "user", content: question }]
-      });
-
-      message.reply(response.data.choices[0].message.content);
-    } catch (err) {
-      console.error(err);
-      message.reply("⚠️ Error checking the fact.");
-    }
+    console.log(response.choices[0].message.content);
+  } catch (error) {
+    console.error("Error calling OpenAI:", error);
   }
-});
+}
 
-client.login(process.env.DISCORD_TOKEN);
+runTest();
+
 
 
 
