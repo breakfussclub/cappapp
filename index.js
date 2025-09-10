@@ -267,26 +267,30 @@ client.on("messageCreate", async (message) => {
 });
 
 // ------------------------
-// Slash Command Registration
+// Slash Command Registration (Guild-specific)
 // ------------------------
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
-  const slashCommands = COMMANDS.map(cmd => 
+  const slashCommands = COMMANDS.map(cmd =>
     new SlashCommandBuilder()
       .setName(cmd.replace("!", "")) // remove prefix
       .setDescription(`Fact-check a statement using ${cmd}`)
-      .addStringOption(opt => opt.setName("statement").setDescription("Statement to fact-check").setRequired(true))
+      .addStringOption(opt =>
+        opt.setName("statement")
+           .setDescription("Statement to fact-check")
+           .setRequired(true)
+      )
   );
 
   try {
     await rest.put(
-      Routes.applicationCommands(client.user.id),
+      Routes.applicationGuildCommands(client.user.id, "917154833750978562"), // register only in your test server
       { body: slashCommands }
     );
-    console.log("✅ Slash commands registered");
+    console.log("✅ Slash commands registered for guild 917154833750978562");
   } catch (err) {
     console.error("Failed to register slash commands:", err);
   }
