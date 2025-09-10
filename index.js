@@ -16,6 +16,9 @@ const client = new Client({
 // Hard-coded Google Fact Check API key
 const API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
 
+// Hard-coded Perplexity API key
+const PERPLEXITY_API_KEY = "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";
+
 // Rate limiting: userId -> timestamp
 const cooldowns = {};
 const COOLDOWN_SECONDS = 10;
@@ -77,6 +80,46 @@ async function factCheck(statement) {
 }
 
 // ------------------------
+// Perplexity Sonar API fallback
+// ------------------------
+async function queryPerplexity(statement) {
+  const url = 'https://sonar.perplexity.ai/v1/answer';
+  const headers = {
+    'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+    'Content-Type': 'application/json',
+  };
+
+  const body = JSON.stringify({
+    query: statement,
+    return_images: false
+  });
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: headers,
+      body: body,
+    });
+
+    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+
+    const data = await response.json();
+    if (data.answer) {
+      return {
+        type: 'text',
+        content: data.answer,
+        sources: data.sources || [],
+      };
+    } else {
+      return { error: 'No answer found from Perplexity' };
+    }
+  } catch (error) {
+    console.error('Perplexity API error:', error);
+    return { error: 'Failed to fetch from Perplexity API' };
+  }
+}
+
+// ------------------------
 // Message handler
 // ------------------------
 client.on("messageCreate", async (message) => {
@@ -133,10 +176,27 @@ client.on("messageCreate", async (message) => {
   // Initial "thinking..." message
   const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
 
+  // --- Attempt Google Fact Check first ---
   const { results, error } = await factCheck(statement);
 
-  if (error) {
-    await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
+  if (error || !results || results.length === 0) {
+    // Fallback to Perplexity Sonar API
+    const sonarResponse = await queryPerplexity(statement);
+
+    if (sonarResponse.error) {
+      await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${sonarResponse.error}`);
+    } else {
+      const embed = new EmbedBuilder()
+        .setColor(0x00ff00)
+        .setTitle('Perplexity AI Response')
+        .setDescription(sonarResponse.content)
+        .addFields(
+          { name: 'Sources', value: sonarResponse.sources.join('\n') || 'No sources available' }
+        )
+        .setTimestamp();
+
+      await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [embed] });
+    }
     return;
   }
 
