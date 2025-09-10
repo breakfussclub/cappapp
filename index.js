@@ -80,48 +80,43 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Perplexity Sonar API fallback (GET version)
+// Perplexity Sonar API fallback (POST to new endpoint)
 // ------------------------
 async function queryPerplexity(statement) {
-  const url = `https://sonar.perplexity.ai/v1/answer?query=${encodeURIComponent(statement)}&return_images=false`;
+  const url = "https://api.perplexity.ai/chat/completions";
   const headers = {
-    'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+    "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+    "Content-Type": "application/json"
   };
 
+  const body = JSON.stringify({
+    model: "perplexity-free",  // free-tier model
+    messages: [{ role: "user", content: statement }]
+  });
+
   try {
-    const response = await fetch(url, { method: 'GET', headers });
+    const response = await fetch(url, { method: "POST", headers, body });
 
-    // Log status code
-    console.log('Perplexity API status:', response.status);
-
-    // Log raw response text
+    console.log("Perplexity API status:", response.status);
     const text = await response.text();
-    console.log('Perplexity raw response:', text);
+    console.log("Perplexity raw response:", text);
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      console.error('Failed to parse JSON:', err);
-      return { error: 'Perplexity returned invalid JSON' };
-    }
+    const data = JSON.parse(text);
 
-    if (data.answer) {
+    if (data.choices && data.choices[0]?.message?.content) {
       return {
-        type: 'text',
-        content: data.answer,
-        sources: data.sources || [],
+        type: "text",
+        content: data.choices[0].message.content,
+        sources: [] // Perplexity may not return sources in this endpoint
       };
     } else {
-      return { error: 'No answer found from Perplexity' };
+      return { error: "No answer found from Perplexity" };
     }
   } catch (error) {
-    console.error('Perplexity API error:', error);
-    return { error: 'Failed to fetch from Perplexity API' };
+    console.error("Perplexity API error:", error);
+    return { error: "Failed to fetch from Perplexity API" };
   }
 }
 
@@ -186,18 +181,18 @@ client.on("messageCreate", async (message) => {
   const { results, error } = await factCheck(statement);
 
   if (error || !results || results.length === 0) {
-    // Fallback to Perplexity Sonar API
-    const sonarResponse = await queryPerplexity(statement);
+    // Fallback to Perplexity AI
+    const perplexityResponse = await queryPerplexity(statement);
 
-    if (sonarResponse.error) {
-      await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${sonarResponse.error}`);
+    if (perplexityResponse.error) {
+      await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${perplexityResponse.error}`);
     } else {
       const embed = new EmbedBuilder()
         .setColor(0x00ff00)
         .setTitle('Perplexity AI Response')
-        .setDescription(sonarResponse.content)
+        .setDescription(perplexityResponse.content)
         .addFields(
-          { name: 'Sources', value: sonarResponse.sources.join('\n') || 'No sources available' }
+          { name: 'Sources', value: perplexityResponse.sources.join('\n') || 'No sources available' }
         )
         .setTimestamp();
 
