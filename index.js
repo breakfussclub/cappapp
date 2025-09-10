@@ -1,6 +1,7 @@
 const { 
-  Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, 
-  ButtonBuilder, ButtonStyle, ComponentType, REST, Routes, SlashCommandBuilder 
+  Client, GatewayIntentBits, EmbedBuilder, 
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, 
+  REST, Routes, SlashCommandBuilder, InteractionResponseFlags 
 } = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
@@ -17,8 +18,8 @@ const client = new Client({
 });
 
 // Hard-coded API keys
-const GOOGLE_API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
-const PERPLEXITY_API_KEY = "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";
+const GOOGLE_API_KEY = "YOUR_GOOGLE_API_KEY";
+const PERPLEXITY_API_KEY = "YOUR_PERPLEXITY_API_KEY";
 
 // Rate limiting: userId -> timestamp
 const cooldowns = {};
@@ -56,6 +57,7 @@ async function factCheck(statement) {
     if (!response.ok) return { error: `⚠️ Error contacting Fact Check API: ${response.status}` };
     const data = await response.json();
     const claims = data.claims || [];
+
     if (claims.length === 0) return { results: [] };
 
     const results = [];
@@ -70,6 +72,7 @@ async function factCheck(statement) {
         });
       });
     });
+
     return { results };
   } catch (error) {
     console.error(error);
@@ -127,16 +130,20 @@ async function queryPerplexity(statement) {
   }
 }
 
-async function handlePerplexityFallback(statement, sentMessage) {
+async function handlePerplexityFallback(statement, sentMessageOrInteraction) {
   const perplexityResult = await queryPerplexity(statement);
   if (!perplexityResult) {
-    await sentMessage.edit({ content: `❌ Could not get a response from Perplexity.` });
+    if (sentMessageOrInteraction.edit) {
+      await sentMessageOrInteraction.edit("❌ Could not get a response from Perplexity.");
+    } else {
+      await sentMessageOrInteraction.reply({ content: "❌ Could not get a response from Perplexity.", flags: InteractionResponseFlags.Ephemeral });
+    }
     return;
   }
 
   const embed = new EmbedBuilder()
     .setColor(perplexityResult.color)
-    .setTitle(`Fact-Check Result (Perplexity)`)
+    .setTitle("Fact-Check Result (Perplexity)")
     .addFields(
       { name: "Claim", value: `> ${statement}` },
       { name: "Verdict", value: perplexityResult.verdict },
@@ -148,22 +155,31 @@ async function handlePerplexityFallback(statement, sentMessage) {
     embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
   }
 
-  await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [embed], components: [] });
+  if (sentMessageOrInteraction.edit) {
+    await sentMessageOrInteraction.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [embed], components: [] });
+  } else {
+    await sentMessageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"`, embeds: [embed], components: [] });
+  }
 }
 
 // ------------------------
-// Fact-check runner (shared for message + slash commands)
+// Fact-check runner (shared by message + slash commands)
 async function runFactCheck(messageOrInteraction, statement) {
-  // Determine if interaction or message
-  const isInteraction = messageOrInteraction.isCommand?.() ?? false;
-  const sentMessage = isInteraction
-    ? await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`, fetchReply: true })
-    : await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...` });
+  let sentMessage;
+  if (messageOrInteraction.edit) {
+    sentMessage = await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n⏳ Checking...`, fetchReply: true });
+  } else {
+    sentMessage = await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n⏳ Checking...`, flags: InteractionResponseFlags.Ephemeral, fetchReply: true });
+  }
 
   const { results, error } = await factCheck(statement);
 
   if (error) {
-    await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"\n\n${error}` });
+    if (sentMessage.edit) {
+      await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n${error}`);
+    } else {
+      await messageOrInteraction.followUp({ content: `🧐 Fact-checking: "${statement}"\n${error}`, flags: InteractionResponseFlags.Ephemeral });
+    }
     return;
   }
 
@@ -171,6 +187,7 @@ async function runFactCheck(messageOrInteraction, statement) {
     return handlePerplexityFallback(statement, sentMessage);
   }
 
+  // Build embeds
   const pages = [];
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
@@ -189,7 +206,7 @@ async function runFactCheck(messageOrInteraction, statement) {
   });
 
   let index = 0;
-  const generateEmbed = (idx) => {
+  const generateEmbed = idx => {
     const r = pages[idx];
     return new EmbedBuilder()
       .setColor(r.color)
@@ -227,7 +244,7 @@ async function runFactCheck(messageOrInteraction, statement) {
   });
 
   collector.on("end", async () => {
-    row.components.forEach(button => button.setDisabled(true));
+    row.components.forEach(b => b.setDisabled(true));
     await msg.edit({ components: [row] });
   });
 }
@@ -235,7 +252,7 @@ async function runFactCheck(messageOrInteraction, statement) {
 // ------------------------
 // Message Handler
 // ------------------------
-client.on("messageCreate", async (message) => {
+client.on("messageCreate", async message => {
   if (message.author.bot) return;
 
   const allowedUserId = "306197826575138816";
@@ -249,7 +266,7 @@ client.on("messageCreate", async (message) => {
 
   const now = Date.now();
   if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
-    return message.reply({ content: `⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.` });
+    return message.reply('⏱ Please wait 10 seconds between fact-checks.');
   }
   cooldowns[message.author.id] = now;
 
@@ -262,7 +279,7 @@ client.on("messageCreate", async (message) => {
   }
 
   if (!statement) statement = message.content.slice(command.length).trim();
-  if (!statement) return message.reply({ content: "⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green` });
+  if (!statement) return message.reply('⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`');
 
   await runFactCheck(message, statement);
 });
@@ -277,19 +294,19 @@ client.once("ready", async () => {
 
   const slashCommands = COMMANDS.map(cmd => 
     new SlashCommandBuilder()
-      .setName(cmd.replace("!", "")) // remove prefix
+      .setName(cmd.replace("!", ""))
       .setDescription(`Fact-check a statement using ${cmd}`)
       .addStringOption(opt => opt.setName("statement").setDescription("Statement to fact-check").setRequired(true))
   );
 
   try {
     await rest.put(
-      Routes.applicationCommands(client.user.id),
+      Routes.applicationCommands(client.user.id), // global registration
       { body: slashCommands }
     );
     console.log("✅ Global slash commands registered");
   } catch (err) {
-    console.error("Failed to register global slash commands:", err);
+    console.error("Failed to register slash commands:", err);
   }
 
   client.user.setPresence({
@@ -301,7 +318,7 @@ client.once("ready", async () => {
 // ------------------------
 // Interaction Handler
 // ------------------------
-client.on("interactionCreate", async (interaction) => {
+client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   const allowedUserId = "306197826575138816";
@@ -309,13 +326,13 @@ client.on("interactionCreate", async (interaction) => {
   const member = interaction.member;
 
   if (interaction.user.id !== allowedUserId && !member.roles.cache.has(allowedRoleId)) {
-    return interaction.reply({ content: "❌ You are not allowed to use this command.", flags: 1 << 6 });
+    return interaction.reply({ content: "❌ You are not allowed to use this command.", flags: InteractionResponseFlags.Ephemeral });
   }
 
   const statement = interaction.options.getString("statement");
   const now = Date.now();
   if (cooldowns[interaction.user.id] && now - cooldowns[interaction.user.id] < COOLDOWN_SECONDS * 1000) {
-    return interaction.reply({ content: `⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`, flags: 1 << 6 });
+    return interaction.reply({ content: "⏱ Please wait 10 seconds between fact-checks.", flags: InteractionResponseFlags.Ephemeral });
   }
   cooldowns[interaction.user.id] = now;
 
