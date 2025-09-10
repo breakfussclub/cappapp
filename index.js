@@ -80,7 +80,7 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Perplexity Sonar API fallback (POST to new endpoint)
+// Perplexity Sonar API fallback (POST with server model)
 // ------------------------
 async function queryPerplexity(statement) {
   const url = "https://api.perplexity.ai/chat/completions";
@@ -90,14 +90,12 @@ async function queryPerplexity(statement) {
   };
 
   const body = JSON.stringify({
-    model: "perplexity-free",  // free-tier model
+    model: "sonar-medium-online", // server-side model
     messages: [{ role: "user", content: statement }]
   });
 
   try {
     const response = await fetch(url, { method: "POST", headers, body });
-
-    console.log("Perplexity API status:", response.status);
     const text = await response.text();
     console.log("Perplexity raw response:", text);
 
@@ -109,7 +107,7 @@ async function queryPerplexity(statement) {
       return {
         type: "text",
         content: data.choices[0].message.content,
-        sources: [] // Perplexity may not return sources in this endpoint
+        sources: [] // may not return sources
       };
     } else {
       return { error: "No answer found from Perplexity" };
