@@ -16,7 +16,7 @@ const client = new Client({
 // Hard-coded Google Fact Check API key
 const API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
 
-// Hard-coded Perplexity API key (server-side usage)
+// Hard-coded Perplexity API key
 const PERPLEXITY_API_KEY = "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";
 
 // Rate limiting: userId -> timestamp
@@ -47,99 +47,127 @@ function ratingColor(rating) {
 }
 
 // ------------------------
-// Fact-check function
+// Google Fact-check function
 // ------------------------
 async function factCheck(statement) {
   const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(statement)}&key=${API_KEY}`;
   try {
     const response = await fetch(url);
-    if (!response.ok) {
-      // Return no results (so fallback can occur) while logging the status
-      console.error(`Fact Check API non-OK status: ${response.status}`);
-      return { results: null, error: `⚠️ Fact Check API returned status ${response.status}` };
-    }
+    if (!response.ok) return { error: `⚠️ Error contacting Fact Check API: ${response.status}` };
     const data = await response.json();
     const claims = data.claims || [];
 
-    if (claims.length === 0) return { results: null, error: null }; // no matches -> fallback
+    if (claims.length === 0) return { error: "❌ No fact-checks found." };
 
     const results = [];
     claims.forEach(claim => {
-      (claim.claimReview || []).forEach(review => {
+      claim.claimReview.forEach(review => {
         results.push({
-          claim: claim.text || "",
-          rating: (review && review.textualRating) || "Unknown",
-          publisher: (review && review.publisher && review.publisher.name) || "Unknown",
-          url: (review && review.url) || "",
-          date: (review && review.publishDate) || "Unknown"
+          claim: claim.text,
+          rating: review.textualRating || "Unknown",
+          publisher: review.publisher.name,
+          url: review.url,
+          date: review.publishDate || "Unknown"
         });
       });
     });
 
-    return { results, error: null };
+    return { results };
   } catch (error) {
-    console.error("Fact Check API error:", error);
-    // Return null results to trigger fallback; include error for logging but don't cause duplicate replies
-    return { results: null, error: "⚠️ An error occurred while contacting the Fact Check API." };
+    console.error(error);
+    return { error: "⚠️ An error occurred while contacting the Fact Check API." };
   }
 }
 
 // ------------------------
-// Perplexity Sonar API fallback (POST to new endpoint)
+// Perplexity fallback
 // ------------------------
 async function queryPerplexity(statement) {
-  const url = "https://api.perplexity.ai/chat/completions";
-  const headers = {
-    "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
-    "Content-Type": "application/json"
-  };
-
-  const body = JSON.stringify({
-    model: "sonar",  // server-side permitted model
-    messages: [{ role: "user", content: statement }]
-  });
-
   try {
-    const response = await fetch(url, { method: "POST", headers, body });
-
-    // Debug/log: status + raw text
-    console.log("Perplexity API status:", response.status);
-    const text = await response.text();
-    console.log("Perplexity raw response:", text);
+    const response = await fetch("https://api.perplexity.ai/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "sonar-medium-online",
+        messages: [{ role: "user", content: statement }]
+      })
+    });
 
     if (!response.ok) {
-      // log & return error to caller
-      let errMsg = `Perplexity HTTP ${response.status}`;
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed?.error?.message) errMsg += ` - ${parsed.error.message}`;
-      } catch (e) {
-        // ignore parse error
+      const text = await response.text();
+      console.error("Perplexity API error:", text);
+      return null;
+    }
+
+    const data = await response.json();
+    return {
+      content: data?.choices?.[0]?.message?.content || "No response",
+      sources: data?.sources || []
+    };
+  } catch (err) {
+    console.error("Perplexity fetch error:", err);
+    return null;
+  }
+}
+
+async function handlePerplexityFallback(statement, perplexityResult, sentMessage) {
+  const pages = splitText(perplexityResult.content || "No response from Perplexity.");
+  let pageIndex = 0;
+
+  const buildEmbed = () => {
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2) // Discord blurple
+      .setTitle("Fact-Check Result")
+      .setDescription(pages[pageIndex])
+      .setFooter({ text: `Page ${pageIndex + 1} of ${pages.length}` })
+      .setTimestamp();
+
+    if (Array.isArray(perplexityResult.sources) && perplexityResult.sources.length > 0) {
+      const srcLines = perplexityResult.sources.slice(0, 6).map(s => {
+        if (typeof s === "string") return s;
+        return s.url || s.link || s.title || JSON.stringify(s);
+      }).filter(Boolean);
+
+      if (srcLines.length > 0) {
+        embed.addFields({ name: "Sources", value: srcLines.join("\n") });
       }
-      console.error("Perplexity error details:", errMsg);
-      return { error: `⚠️ Perplexity API error: ${errMsg}` };
     }
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      console.error("Failed to parse Perplexity JSON:", err);
-      return { error: "⚠️ Perplexity returned invalid JSON" };
-    }
+    return embed;
+  };
 
-    // Perplexity chat completions usually return choices[0].message.content
-    const content = data?.choices?.[0]?.message?.content || null;
-    // Try to extract sources if present (some Perplexity responses include references)
-    const sources = data?.sources || [];
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("prev").setLabel("⬅️ Prev").setStyle(ButtonStyle.Secondary).setDisabled(pageIndex === 0),
+    new ButtonBuilder().setCustomId("next").setLabel("Next ➡️").setStyle(ButtonStyle.Secondary).setDisabled(pageIndex === pages.length - 1)
+  );
 
-    if (!content) {
-      return { error: "⚠️ No answer found from Perplexity" };
-    }
-    return { content, sources, error: null };
-  } catch (error) {
-    console.error("Perplexity API exception:", error);
-    return { error: "⚠️ Failed to fetch from Perplexity API" };
+  await sentMessage.edit({
+    content: `🧐 Fact-checking: "${statement}"`,
+    embeds: [buildEmbed()],
+    components: pages.length > 1 ? [row] : []
+  });
+
+  if (pages.length > 1) {
+    const collector = sentMessage.createMessageComponentCollector({ time: 60000 });
+
+    collector.on("collect", async i => {
+      if (i.customId === "prev" && pageIndex > 0) pageIndex--;
+      else if (i.customId === "next" && pageIndex < pages.length - 1) pageIndex++;
+
+      const newRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("prev").setLabel("⬅️ Prev").setStyle(ButtonStyle.Secondary).setDisabled(pageIndex === 0),
+        new ButtonBuilder().setCustomId("next").setLabel("Next ➡️").setStyle(ButtonStyle.Secondary).setDisabled(pageIndex === pages.length - 1)
+      );
+
+      await i.update({ embeds: [buildEmbed()], components: [newRow] });
+    });
+
+    collector.on("end", async () => {
+      await sentMessage.edit({ components: [] });
+    });
   }
 }
 
@@ -162,7 +190,6 @@ client.on("messageCreate", async (message) => {
   }
   // ------------------------
 
-  // Check if message starts with any of the aliases
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
   if (!command) return;
 
@@ -176,7 +203,6 @@ client.on("messageCreate", async (message) => {
   // Determine statement
   let statement = null;
 
-  // If replying, use replied message content
   if (message.reference) {
     try {
       const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -188,7 +214,6 @@ client.on("messageCreate", async (message) => {
     }
   }
 
-  // If no reply or failed to fetch, use message after command
   if (!statement) {
     statement = message.content.slice(command.length).trim();
   }
@@ -197,120 +222,76 @@ client.on("messageCreate", async (message) => {
     return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
   }
 
-  // Initial "thinking..." message (we will edit this once with final output)
+  // Initial "thinking..." message
   const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
 
-  // --- Attempt Google Fact Check first ---
   const { results, error } = await factCheck(statement);
 
-  // If Google gave usable results, proceed to build pages and interactive embed
-  if (results && results.length > 0) {
-    // Split long claims into pages if needed
-    const pages = [];
-    results.forEach(r => {
-      const parts = splitText(r.claim, 1000);
-      parts.forEach(p => {
-        pages.push({
-          claim: p,
-          rating: r.rating,
-          publisher: r.publisher,
-          url: r.url,
-          date: r.date
-        });
-      });
-    });
-
-    let index = 0;
-    const generateEmbed = (idx) => {
-      const r = pages[idx];
-      return new EmbedBuilder()
-        .setColor(ratingColor(r.rating))
-        .setTitle(`Fact-Check Result ${idx + 1}/${pages.length}`)
-        .addFields(
-          { name: "Claim", value: `> ${r.claim}` },
-          { name: "Rating", value: r.rating, inline: true },
-          { name: "Publisher", value: r.publisher, inline: true },
-          { name: "Source", value: r.url ? `[Link](${r.url})` : "No link provided" },
-          { name: "Reviewed Date", value: r.date, inline: true }
-        )
-        .setTimestamp();
-    };
-
-    // Pagination buttons
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
-        new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(pages.length === 1),
-        new ButtonBuilder().setCustomId("quick").setLabel("🔄 Quick Search").setStyle(ButtonStyle.Secondary)
-      );
-
-    const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
-
-    const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
-
-    collector.on("collect", async i => {
-      try {
-        if (i.customId === "next") index++;
-        if (i.customId === "prev") index--;
-        if (i.customId === "quick") {
-          index = 0;
-        }
-
-        row.components[0].setDisabled(index === 0);
-        row.components[1].setDisabled(index === pages.length - 1);
-
-        await i.update({ embeds: [generateEmbed(index)], components: [row] });
-      } catch (e) {
-        console.error("Collector error:", e);
-      }
-    });
-
-    collector.on("end", async () => {
-      row.components.forEach(button => button.setDisabled(true));
-      try {
-        await msg.edit({ components: [row] });
-      } catch (e) {
-        console.error("Failed to disable buttons on end:", e);
-      }
-    });
-
-    return; // finished handling Google result
-  }
-
-  // If we reach here: Google had no results or there was an error. Use Perplexity fallback.
-  // We purposely do NOT send the Google error message as a separate reply to avoid duplicates.
-  const perplexityResult = await queryPerplexity(statement);
-
-  if (perplexityResult.error) {
-    // Edit the thinking message with the Perplexity error (or Google error info)
-    // Prefer Perplexity error; if Perplexity also failed, include Google error for context (if any)
-    const combinedError = perplexityResult.error + (error ? `\n\n(Google: ${error})` : "");
-    await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${combinedError}`);
-    return;
-  }
-
-  // Build an embed for the Perplexity response
-  const perplexityEmbed = new EmbedBuilder()
-    .setColor(0x00ff00)
-    .setTitle("Perplexity AI Response (fallback)")
-    .setDescription(perplexityResult.content)
-    .setTimestamp();
-
-  // If Perplexity returned sources array, add them (safely)
-  if (Array.isArray(perplexityResult.sources) && perplexityResult.sources.length > 0) {
-    // Limit how many sources to show to avoid huge embeds
-    const srcLines = perplexityResult.sources.slice(0, 6).map(s => {
-      if (typeof s === "string") return s;
-      // If Perplexity included objects, try to extract a URL/title
-      return s.url || s.link || s.title || JSON.stringify(s);
-    }).filter(Boolean);
-
-    if (srcLines.length > 0) {
-      perplexityEmbed.addFields({ name: "Sources", value: srcLines.join("\n") });
+  if (error || !results) {
+    console.log("Google fact-check failed, trying Perplexity...");
+    const perplexityResult = await queryPerplexity(statement);
+    if (perplexityResult) {
+      return await handlePerplexityFallback(statement, perplexityResult, sentMessage);
+    } else {
+      return await sentMessage.edit(`❌ Unable to fact-check "${statement}" right now.`);
     }
   }
 
-  await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [perplexityEmbed] });
+  // Google success
+  const pages = [];
+  results.forEach(r => {
+    const parts = splitText(r.claim, 1000);
+    parts.forEach(p => {
+      pages.push({
+        claim: p,
+        rating: r.rating,
+        publisher: r.publisher,
+        url: r.url,
+        date: r.date
+      });
+    });
+  });
+
+  let index = 0;
+  const generateEmbed = (idx) => {
+    const r = pages[idx];
+    return new EmbedBuilder()
+      .setColor(ratingColor(r.rating))
+      .setTitle(`Fact-Check Result ${idx + 1}/${pages.length}`)
+      .addFields(
+        { name: "Claim", value: `> ${r.claim}` },
+        { name: "Rating", value: r.rating, inline: true },
+        { name: "Publisher", value: r.publisher, inline: true },
+        { name: "Source", value: `[Link](${r.url})` },
+        { name: "Reviewed Date", value: r.date, inline: true }
+      )
+      .setTimestamp();
+  };
+
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
+      new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(pages.length === 1)
+    );
+
+  const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
+
+  const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
+
+  collector.on("collect", async i => {
+    if (i.customId === "next") index++;
+    if (i.customId === "prev") index--;
+
+    row.components[0].setDisabled(index === 0);
+    row.components[1].setDisabled(index === pages.length - 1);
+
+    await i.update({ embeds: [generateEmbed(index)], components: [row] });
+  });
+
+  collector.on("end", async () => {
+    row.components.forEach(button => button.setDisabled(true));
+    await msg.edit({ components: [row] });
+  });
 });
 
 // ------------------------
