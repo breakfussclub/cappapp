@@ -80,22 +80,16 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Perplexity Sonar API fallback (debug version)
+// Perplexity Sonar API fallback (GET version)
 // ------------------------
 async function queryPerplexity(statement) {
-  const url = 'https://sonar.perplexity.ai/v1/answer';
+  const url = `https://sonar.perplexity.ai/v1/answer?query=${encodeURIComponent(statement)}&return_images=false`;
   const headers = {
     'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
-    'Content-Type': 'application/json',
   };
 
-  const body = JSON.stringify({
-    query: statement,
-    return_images: false
-  });
-
   try {
-    const response = await fetch(url, { method: 'POST', headers, body });
+    const response = await fetch(url, { method: 'GET', headers });
 
     // Log status code
     console.log('Perplexity API status:', response.status);
