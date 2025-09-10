@@ -1,10 +1,34 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require("discord.js");
-const fetch = require("node-fetch"); // npm install node-fetch@2
+const { 
+  Client, 
+  GatewayIntentBits, 
+  EmbedBuilder, 
+  ActionRowBuilder, 
+  ButtonBuilder, 
+  ButtonStyle, 
+  ComponentType, 
+  REST, 
+  Routes, 
+  InteractionType 
+} = require("discord.js");
+const fetch = require("node-fetch");
 const http = require("http");
 
-// ------------------------
-// CONFIG
-// ------------------------
+// ---------------- CONFIG ----------------
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+
+// Hard-coded API keys
+const GOOGLE_API_KEY = "YOUR_GOOGLE_API_KEY";
+const PERPLEXITY_API_KEY = "YOUR_PERPLEXITY_API_KEY";
+
+// Rate limiting
+const cooldowns = {};
+const COOLDOWN_SECONDS = 10;
+
+// Command aliases
+const COMMANDS = ["cap", "fact", "verify"];
+
+// ---------------- CLIENT ----------------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -13,58 +37,54 @@ const client = new Client({
   ]
 });
 
-// Hard-coded API keys
-const GOOGLE_API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
-const PERPLEXITY_API_KEY = "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";
+// ---------------- GLOBAL SLASH REGISTRATION ----------------
+async function registerGlobalSlashCommands() {
+  const commands = COMMANDS.map(name => ({
+    name,
+    description: `Fact-check a statement with /${name}`,
+    options: [
+      {
+        name: "statement",
+        type: 3, // STRING
+        description: "The claim to fact-check",
+        required: false
+      }
+    ]
+  }));
 
-// Rate limiting: userId -> timestamp
-const cooldowns = {};
-const COOLDOWN_SECONDS = 10;
+  const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
+  try {
+    console.log("Registering global slash commands...");
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log("✅ Global slash commands registered!");
+  } catch (err) {
+    console.error("❌ Error registering commands:", err);
+  }
+}
 
-// Command aliases
-const COMMANDS = ["!cap", "!fact", "!verify"];
-
-// ------------------------
-// Helpers
-// ------------------------
+// ---------------- HELPERS ----------------
 function splitText(text, maxLength = 1000) {
   const parts = [];
-  for (let i = 0; i < text.length; i += maxLength) {
-    parts.push(text.slice(i, i + maxLength));
-  }
+  for (let i = 0; i < text.length; i += maxLength) parts.push(text.slice(i, i + maxLength));
   return parts;
 }
 
-function normalizeGoogleRating(rating) {
+function normalizeRating(rating) {
   if (!rating) return { verdict: "Other", color: 0xffff00 };
-
   const r = rating.toLowerCase();
-
-  // True bucket
-  if (r.includes("true") || r.includes("correct") || r.includes("accurate")) {
-    return { verdict: "True", color: 0x00ff00 };
-  }
-
-  // False bucket
-  if (r.includes("false") || r.includes("incorrect") || r.includes("pants on fire") || r.includes("hoax")) {
-    return { verdict: "False", color: 0xff0000 };
-  }
-
-  // Other/uncertain
+  if (r.includes("true") || r.includes("correct") || r.includes("accurate")) return { verdict: "True", color: 0x00ff00 };
+  if (r.includes("false") || r.includes("incorrect") || r.includes("pants on fire") || r.includes("hoax")) return { verdict: "False", color: 0xff0000 };
   return { verdict: "Other", color: 0xffff00 };
 }
 
-// ------------------------
-// Google Fact Check
-// ------------------------
-async function factCheck(statement) {
+// ---------------- GOOGLE FACT-CHECK ----------------
+async function googleFactCheck(statement) {
   const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(statement)}&key=${GOOGLE_API_KEY}`;
   try {
-    const response = await fetch(url);
-    if (!response.ok) return { error: `⚠️ Error contacting Fact Check API: ${response.status}` };
-    const data = await response.json();
+    const res = await fetch(url);
+    if (!res.ok) return { error: `⚠️ Google Fact Check API error: ${res.status}` };
+    const data = await res.json();
     const claims = data.claims || [];
-
     if (claims.length === 0) return { results: [] };
 
     const results = [];
@@ -79,23 +99,20 @@ async function factCheck(statement) {
         });
       });
     });
-
     return { results };
-  } catch (error) {
-    console.error(error);
-    return { error: "⚠️ An error occurred while contacting the Fact Check API." };
+  } catch (err) {
+    console.error(err);
+    return { error: "⚠️ Error contacting Google Fact Check API." };
   }
 }
 
-// ------------------------
-// Perplexity Fallback
-// ------------------------
+// ---------------- PERPLEXITY FALLBACK ----------------
 async function queryPerplexity(statement) {
   const url = "https://api.perplexity.ai/chat/completions";
   const body = {
     model: "sonar",
     messages: [
-      { role: "system", content: "Classify the following statement strictly as either 'True' or 'False'. Provide a short reasoning and include sources if possible. Use the format: \nVerdict: True/False\nReason: <text>\nSources: <list>" },
+      { role: "system", content: "Classify the following statement strictly as True or False. Format: Verdict: True/False\nReason: ...\nSources: ..." },
       { role: "user", content: statement }
     ]
   };
@@ -109,26 +126,20 @@ async function queryPerplexity(statement) {
       },
       body: JSON.stringify(body)
     });
-
     if (!res.ok) {
       console.error(`Perplexity API error: HTTP ${res.status}`);
       return null;
     }
-
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content || "";
 
-    // Extract verdict
     const verdictMatch = content.match(/Verdict:\s*(True|False)/i);
     const verdict = verdictMatch ? verdictMatch[1] : "Other";
-    const color = verdict.toLowerCase() === "true" ? 0x00ff00 :
-                  verdict.toLowerCase() === "false" ? 0xff0000 : 0xffff00;
+    const color = verdict.toLowerCase() === "true" ? 0x00ff00 : verdict.toLowerCase() === "false" ? 0xff0000 : 0xffff00;
 
-    // Extract reason
     const reasonMatch = content.match(/Reason:\s*([\s\S]*?)(?:Sources:|$)/i);
     const reason = reasonMatch ? reasonMatch[1].trim() : "No reasoning provided.";
 
-    // Extract sources
     const sourcesMatch = content.match(/Sources:\s*([\s\S]*)/i);
     const sourcesText = sourcesMatch ? sourcesMatch[1].trim() : "";
     const sources = sourcesText.split("\n").filter(s => s.trim().length > 0);
@@ -141,75 +152,31 @@ async function queryPerplexity(statement) {
 }
 
 async function handlePerplexityFallback(statement, sentMessage) {
-  const perplexityResult = await queryPerplexity(statement);
-  if (!perplexityResult) {
+  const result = await queryPerplexity(statement);
+  if (!result) {
     await sentMessage.edit(`❌ Could not get a response from Perplexity.`);
     return;
   }
 
   const embed = new EmbedBuilder()
-    .setColor(perplexityResult.color)
+    .setColor(result.color)
     .setTitle(`Fact-Check Result (Perplexity)`)
     .addFields(
       { name: "Claim", value: `> ${statement}` },
-      { name: "Verdict", value: perplexityResult.verdict },
-      { name: "Reasoning", value: perplexityResult.reason.slice(0, 1000) }
-    )
-    .setTimestamp();
+      { name: "Verdict", value: result.verdict },
+      { name: "Reasoning", value: result.reason.slice(0, 1000) }
+    );
 
-  if (perplexityResult.sources.length > 0) {
-    embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
+  if (result.sources.length > 0) {
+    embed.addFields({ name: "Sources", value: result.sources.slice(0, 6).join("\n") });
   }
 
-  await sentMessage.edit({
-    content: `🧐 Fact-checking: "${statement}"`,
-    embeds: [embed],
-    components: []
-  });
+  await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [embed], components: [] });
 }
 
-// ------------------------
-// Message Handler
-// ------------------------
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
-
-  const allowedUserId = "306197826575138816";
-  const allowedRoleId = "1410526844318388336";
-
-  const member = message.member;
-  if (message.author.id !== allowedUserId && !member.roles.cache.has(allowedRoleId)) {
-    return;
-  }
-
-  const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
-  if (!command) return;
-
-  // Rate limiting
-  const now = Date.now();
-  if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
-    return message.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
-  }
-  cooldowns[message.author.id] = now;
-
-  // Determine statement
-  let statement = null;
-
-  if (message.reference) {
-    try {
-      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
-      if (repliedMessage) statement = repliedMessage.content.trim();
-    } catch (err) {
-      console.error("Failed to fetch replied-to message:", err);
-    }
-  }
-
-  if (!statement) statement = message.content.slice(command.length).trim();
-  if (!statement) return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
-
-  const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
-
-  const { results, error } = await factCheck(statement);
+// ---------------- SHARED FACT-CHECK FUNCTION ----------------
+async function performFactCheck(statement, sentMessage) {
+  const { results, error } = await googleFactCheck(statement);
 
   if (error) {
     await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
@@ -217,27 +184,15 @@ client.on("messageCreate", async (message) => {
   }
 
   if (!results || results.length === 0) {
-    // Trigger Perplexity fallback ONLY if Google returns no results
     return handlePerplexityFallback(statement, sentMessage);
   }
 
-  // ------------------------
-  // Google results embed
-  // ------------------------
   const pages = [];
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
     parts.forEach(p => {
-      const norm = normalizeGoogleRating(r.rating);
-      pages.push({
-        claim: p,
-        verdict: norm.verdict,
-        color: norm.color,
-        rating: r.rating,
-        publisher: r.publisher,
-        url: r.url,
-        date: r.date
-      });
+      const norm = normalizeRating(r.rating);
+      pages.push({ claim: p, verdict: norm.verdict, color: norm.color, rating: r.rating, publisher: r.publisher, url: r.url, date: r.date });
     });
   });
 
@@ -246,7 +201,7 @@ client.on("messageCreate", async (message) => {
     const r = pages[idx];
     return new EmbedBuilder()
       .setColor(r.color)
-      .setTitle(`Fact-Check Result ${idx + 1}/${pages.length}`)
+      .setTitle(`Fact-Check Result ${idx+1}/${pages.length}`)
       .addFields(
         { name: "Claim", value: `> ${r.claim}` },
         { name: "Verdict", value: r.verdict, inline: true },
@@ -260,8 +215,7 @@ client.on("messageCreate", async (message) => {
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
-    new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(pages.length === 1),
-    new ButtonBuilder().setCustomId("quick").setLabel("🔄 Quick Search").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(pages.length === 1)
   );
 
   const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
@@ -269,45 +223,80 @@ client.on("messageCreate", async (message) => {
   const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
 
   collector.on("collect", async i => {
-    if (i.customId === "next") index++;
-    if (i.customId === "prev") index--;
-    if (i.customId === "quick") index = 0;
-
+    if (i.customId === "next" && index < pages.length-1) index++;
+    if (i.customId === "prev" && index > 0) index--;
     row.components[0].setDisabled(index === 0);
-    row.components[1].setDisabled(index === pages.length - 1);
-
+    row.components[1].setDisabled(index === pages.length-1);
     await i.update({ embeds: [generateEmbed(index)], components: [row] });
   });
 
   collector.on("end", async () => {
-    row.components.forEach(button => button.setDisabled(true));
+    row.components.forEach(btn => btn.setDisabled(true));
     await msg.edit({ components: [row] });
   });
+}
+
+// ---------------- TEXT COMMAND HANDLER ----------------
+client.on("messageCreate", async (msg) => {
+  if (msg.author.bot) return;
+
+  const [cmd, ...args] = msg.content.trim().split(/\s+/);
+  const base = cmd.slice(1).toLowerCase();
+  if (!COMMANDS.includes(base)) return;
+
+  // Rate limiting
+  const now = Date.now();
+  if (cooldowns[msg.author.id] && now - cooldowns[msg.author.id] < COOLDOWN_SECONDS * 1000) {
+    return msg.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
+  }
+  cooldowns[msg.author.id] = now;
+
+  let statement = args.join(" ");
+  if (!statement && msg.reference) {
+    try {
+      const refMsg = await msg.channel.messages.fetch(msg.reference.messageId);
+      statement = refMsg.content;
+    } catch {}
+  }
+  if (!statement) return msg.reply("⚠️ Please provide a statement or reply to a message.");
+
+  const sentMsg = await msg.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
+  performFactCheck(statement, sentMsg);
 });
 
-// ------------------------
-// Bot ready
-// ------------------------
+// ---------------- SLASH COMMAND HANDLER ----------------
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (!COMMANDS.includes(interaction.commandName)) return;
+
+  let statement = interaction.options.getString("statement");
+
+  // If no input, check if replying
+  if (!statement && interaction.type === InteractionType.ApplicationCommand) {
+    const ref = interaction.targetMessage;
+    if (ref) statement = ref.content;
+  }
+
+  if (!statement) {
+    return interaction.reply({ content: "⚠️ Please provide a statement or reply to a message.", ephemeral: true });
+  }
+
+  const sentMsg = await interaction.reply({ content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`, fetchReply: true });
+  performFactCheck(statement, sentMsg);
+});
+
+// ---------------- STARTUP ----------------
 client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  client.user.setPresence({
-    activities: [{ name: "👀 Rishi & Sav", type: 3 }],
-    status: "online",
-  });
+  console.log(`✅ Logged in as ${client.user.tag}`);
+  client.user.setPresence({ activities: [{ name: "Fact-Checking", type: 3 }], status: "online" });
 });
 
-// ------------------------
-// Discord login
-// ------------------------
-client.login(process.env.DISCORD_TOKEN);
+registerGlobalSlashCommands();
+client.login(DISCORD_TOKEN);
 
-// ------------------------
-// Dummy HTTP server for Render
-// ------------------------
+// ---------------- HTTP SERVER FOR RENDER ----------------
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
   res.end("Bot is running!");
-}).listen(PORT, () => {
-  console.log(`Listening on port ${PORT}`);
-});
+}).listen(PORT, () => console.log(`Listening on port ${PORT}`));
