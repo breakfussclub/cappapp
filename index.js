@@ -35,12 +35,23 @@ function splitText(text, maxLength = 1000) {
   return parts;
 }
 
-function ratingColor(rating) {
-  if (!rating) return 0x808080; // gray
+function normalizeGoogleRating(rating) {
+  if (!rating) return { verdict: "Other", color: 0xffff00 };
+
   const r = rating.toLowerCase();
-  if (r.includes("true")) return 0x00ff00; // green
-  if (r.includes("false")) return 0xff0000; // red
-  return 0xffff00; // yellow for partially true/misleading
+
+  // True bucket
+  if (r.includes("true") || r.includes("correct") || r.includes("accurate")) {
+    return { verdict: "True", color: 0x00ff00 };
+  }
+
+  // False bucket
+  if (r.includes("false") || r.includes("incorrect") || r.includes("pants on fire") || r.includes("hoax")) {
+    return { verdict: "False", color: 0xff0000 };
+  }
+
+  // Other/uncertain
+  return { verdict: "Other", color: 0xffff00 };
 }
 
 // ------------------------
@@ -83,7 +94,10 @@ async function queryPerplexity(statement) {
   const url = "https://api.perplexity.ai/chat/completions";
   const body = {
     model: "sonar",
-    messages: [{ role: "user", content: statement }]
+    messages: [
+      { role: "system", content: "Classify the following statement strictly as either 'True' or 'False'. Provide a short reasoning and include sources if possible. Use the format: \nVerdict: True/False\nReason: <text>\nSources: <list>" },
+      { role: "user", content: statement }
+    ]
   };
 
   try {
@@ -102,11 +116,24 @@ async function queryPerplexity(statement) {
     }
 
     const data = await res.json();
-    // Assuming response format: data.choices[0].message.content
-    return {
-      content: data?.choices?.[0]?.message?.content || "",
-      sources: data?.choices?.[0]?.message?.sources || []
-    };
+    const content = data?.choices?.[0]?.message?.content || "";
+
+    // Extract verdict
+    const verdictMatch = content.match(/Verdict:\s*(True|False)/i);
+    const verdict = verdictMatch ? verdictMatch[1] : "Other";
+    const color = verdict.toLowerCase() === "true" ? 0x00ff00 :
+                  verdict.toLowerCase() === "false" ? 0xff0000 : 0xffff00;
+
+    // Extract reason
+    const reasonMatch = content.match(/Reason:\s*([\s\S]*?)(?:Sources:|$)/i);
+    const reason = reasonMatch ? reasonMatch[1].trim() : "No reasoning provided.";
+
+    // Extract sources
+    const sourcesMatch = content.match(/Sources:\s*([\s\S]*)/i);
+    const sourcesText = sourcesMatch ? sourcesMatch[1].trim() : "";
+    const sources = sourcesText.split("\n").filter(s => s.trim().length > 0);
+
+    return { verdict, color, reason, sources, raw: content };
   } catch (err) {
     console.error("Perplexity API error:", err);
     return null;
@@ -120,58 +147,25 @@ async function handlePerplexityFallback(statement, sentMessage) {
     return;
   }
 
-  const pages = splitText(perplexityResult.content || "No response from Perplexity.");
-  let pageIndex = 0;
+  const embed = new EmbedBuilder()
+    .setColor(perplexityResult.color)
+    .setTitle(`Fact-Check Result (Perplexity)`)
+    .addFields(
+      { name: "Claim", value: `> ${statement}` },
+      { name: "Verdict", value: perplexityResult.verdict },
+      { name: "Reasoning", value: perplexityResult.reason.slice(0, 1000) }
+    )
+    .setTimestamp();
 
-  const buildEmbed = () => {
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle(`Fact-Check Result ${pageIndex + 1}/${pages.length}`)
-      .addFields({ name: "Claim", value: `> ${pages[pageIndex]}` })
-      .setTimestamp();
-
-    if (Array.isArray(perplexityResult.sources) && perplexityResult.sources.length > 0) {
-      const srcLines = perplexityResult.sources.slice(0, 6).map(s => {
-        if (typeof s === "string") return s;
-        return s.url || s.link || s.title || JSON.stringify(s);
-      }).filter(Boolean);
-
-      if (srcLines.length > 0) {
-        embed.addFields({ name: "Source", value: srcLines.join("\n") });
-      }
-    }
-
-    return embed;
-  };
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(pageIndex === 0),
-    new ButtonBuilder().setCustomId("next").setLabel("Next ▶️").setStyle(ButtonStyle.Primary).setDisabled(pageIndex === pages.length - 1)
-  );
+  if (perplexityResult.sources.length > 0) {
+    embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
+  }
 
   await sentMessage.edit({
     content: `🧐 Fact-checking: "${statement}"`,
-    embeds: [buildEmbed()],
-    components: pages.length > 1 ? [row] : []
+    embeds: [embed],
+    components: []
   });
-
-  if (pages.length > 1) {
-    const collector = sentMessage.createMessageComponentCollector({ time: 60000 });
-
-    collector.on("collect", async i => {
-      if (i.customId === "prev" && pageIndex > 0) pageIndex--;
-      else if (i.customId === "next" && pageIndex < pages.length - 1) pageIndex++;
-
-      row.components[0].setDisabled(pageIndex === 0);
-      row.components[1].setDisabled(pageIndex === pages.length - 1);
-
-      await i.update({ embeds: [buildEmbed()], components: [row] });
-    });
-
-    collector.on("end", async () => {
-      await sentMessage.edit({ components: [] });
-    });
-  }
 }
 
 // ------------------------
@@ -234,7 +228,16 @@ client.on("messageCreate", async (message) => {
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
     parts.forEach(p => {
-      pages.push({ claim: p, rating: r.rating, publisher: r.publisher, url: r.url, date: r.date });
+      const norm = normalizeGoogleRating(r.rating);
+      pages.push({
+        claim: p,
+        verdict: norm.verdict,
+        color: norm.color,
+        rating: r.rating,
+        publisher: r.publisher,
+        url: r.url,
+        date: r.date
+      });
     });
   });
 
@@ -242,11 +245,12 @@ client.on("messageCreate", async (message) => {
   const generateEmbed = (idx) => {
     const r = pages[idx];
     return new EmbedBuilder()
-      .setColor(ratingColor(r.rating))
+      .setColor(r.color)
       .setTitle(`Fact-Check Result ${idx + 1}/${pages.length}`)
       .addFields(
         { name: "Claim", value: `> ${r.claim}` },
-        { name: "Rating", value: r.rating, inline: true },
+        { name: "Verdict", value: r.verdict, inline: true },
+        { name: "Original Rating", value: r.rating, inline: true },
         { name: "Publisher", value: r.publisher, inline: true },
         { name: "Source", value: `[Link](${r.url})` },
         { name: "Reviewed Date", value: r.date, inline: true }
