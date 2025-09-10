@@ -57,15 +57,19 @@ async function factCheck(statement) {
     if (claims.length === 0) return { results: [] };
 
     const results = [];
+    const seenURLs = new Set(); // Deduplicate
     claims.forEach(claim => {
       claim.claimReview.forEach(review => {
-        results.push({
-          claim: claim.text,
-          rating: review.textualRating || "Unknown",
-          publisher: review.publisher.name,
-          url: review.url,
-          date: review.publishDate || "Unknown"
-        });
+        if (!seenURLs.has(review.url)) {
+          seenURLs.add(review.url);
+          results.push({
+            claim: claim.text,
+            rating: review.textualRating || "Unknown",
+            publisher: review.publisher.name,
+            url: review.url,
+            date: review.publishDate || "Unknown"
+          });
+        }
       });
     });
 
@@ -77,24 +81,33 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Wikipedia helper (JSON REST API fallback)
+// Wikipedia helper (fuzzy search)
 // ------------------------
-async function wikipediaSummary(query) {
+async function wikipediaSummaryFuzzy(query) {
   try {
-    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const data = await response.json();
+    // Step 1: search for matching pages
+    const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&utf8=1`;
+    const searchResp = await fetch(searchUrl);
+    const searchData = await searchResp.json();
+    const results = searchData.query.search;
+    if (!results || results.length === 0) return null;
 
-    if (data.extract) {
+    const bestMatch = results[0].title;
+
+    // Step 2: get summary of best match
+    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(bestMatch)}`;
+    const summaryResp = await fetch(summaryUrl);
+    const summaryData = await summaryResp.json();
+
+    if (summaryData.extract) {
       return {
-        title: data.title,
-        extract: data.extract,
-        url: data.content_urls.desktop.page
+        title: summaryData.title,
+        extract: summaryData.extract,
+        url: summaryData.content_urls.desktop.page
       };
     }
   } catch (err) {
-    console.error("Wikipedia fetch error:", err);
+    console.error("Wikipedia fuzzy fetch error:", err);
   }
   return null;
 }
@@ -138,10 +151,12 @@ client.on("messageCreate", async (message) => {
     return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
   }
 
-  // Initial "thinking..." message
+  // Send initial "thinking..." message
   const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
 
-  // Check Google Fact Check API
+  // ------------------------
+  // Google Fact Check
+  // ------------------------
   const { results, error } = await factCheck(statement);
 
   if (error) {
@@ -149,9 +164,28 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  if (!results || results.length === 0) {
-    // Fallback: Wikipedia
-    const wiki = await wikipediaSummary(statement);
+  let pages = [];
+
+  if (results && results.length > 0) {
+    results.forEach(r => {
+      const parts = splitText(r.claim, 1000);
+      parts.forEach(p => {
+        pages.push({
+          claim: p,
+          rating: r.rating,
+          publisher: r.publisher,
+          url: r.url,
+          date: r.date
+        });
+      });
+    });
+  }
+
+  // ------------------------
+  // Wikipedia fallback (fuzzy)
+  // ------------------------
+  if (pages.length === 0) {
+    const wiki = await wikipediaSummaryFuzzy(statement);
     if (wiki) {
       const embed = new EmbedBuilder()
         .setColor(0x808080)
@@ -159,7 +193,11 @@ client.on("messageCreate", async (message) => {
         .setDescription(wiki.extract)
         .setURL(wiki.url)
         .setTimestamp();
-      await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"\n\nNo official fact-checks found. Showing Wikipedia summary instead:`, embeds: [embed] });
+
+      await sentMessage.edit({ 
+        content: `🧐 Fact-checking: "${statement}"\n\nNo official fact-checks found. Showing Wikipedia summary instead:`,
+        embeds: [embed] 
+      });
       return;
     }
 
@@ -168,21 +206,9 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  // Split long claims into pages if needed
-  const pages = [];
-  results.forEach(r => {
-    const parts = splitText(r.claim, 1000); // 1000 chars per page
-    parts.forEach(p => {
-      pages.push({
-        claim: p,
-        rating: r.rating,
-        publisher: r.publisher,
-        url: r.url,
-        date: r.date
-      });
-    });
-  });
-
+  // ------------------------
+  // Pagination for Google results
+  // ------------------------
   let index = 0;
   const generateEmbed = (idx) => {
     const r = pages[idx];
@@ -199,7 +225,6 @@ client.on("messageCreate", async (message) => {
       .setTimestamp();
   };
 
-  // Pagination buttons
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder().setCustomId("prev").setLabel("◀️ Previous").setStyle(ButtonStyle.Primary).setDisabled(true),
