@@ -81,33 +81,41 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Wikipedia helper (fuzzy search)
+// Wikipedia helper (relevant fuzzy search)
 // ------------------------
-async function wikipediaSummaryFuzzy(query) {
+function extractKeywords(statement) {
+  const matches = statement.match(/\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\b/g);
+  return matches ? matches.join(" ") : statement;
+}
+
+async function wikipediaSummaryRelevant(statement) {
+  const keywords = extractKeywords(statement);
+
   try {
-    // Step 1: search for matching pages
-    const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&utf8=1`;
+    const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(keywords)}&format=json&utf8=1`;
     const searchResp = await fetch(searchUrl);
     const searchData = await searchResp.json();
     const results = searchData.query.search;
     if (!results || results.length === 0) return null;
 
-    const bestMatch = results[0].title;
+    for (const res of results) {
+      const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(res.title)}`;
+      const summaryResp = await fetch(summaryUrl);
+      const summaryData = await summaryResp.json();
+      if (!summaryData.extract) continue;
 
-    // Step 2: get summary of best match
-    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(bestMatch)}`;
-    const summaryResp = await fetch(summaryUrl);
-    const summaryData = await summaryResp.json();
-
-    if (summaryData.extract) {
-      return {
-        title: summaryData.title,
-        extract: summaryData.extract,
-        url: summaryData.content_urls.desktop.page
-      };
+      const keywordList = keywords.split(/\s+/);
+      const relevance = keywordList.some(kw => summaryData.extract.toLowerCase().includes(kw.toLowerCase()));
+      if (relevance) {
+        return {
+          title: summaryData.title,
+          extract: summaryData.extract,
+          url: summaryData.content_urls.desktop.page
+        };
+      }
     }
   } catch (err) {
-    console.error("Wikipedia fuzzy fetch error:", err);
+    console.error("Wikipedia relevant fetch error:", err);
   }
   return null;
 }
@@ -118,21 +126,16 @@ async function wikipediaSummaryFuzzy(query) {
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  // Check if message starts with any of the aliases
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
   if (!command) return;
 
-  // Rate limiting
   const now = Date.now();
   if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
     return message.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
   }
   cooldowns[message.author.id] = now;
 
-  // Determine statement
   let statement = null;
-
-  // If replying, use replied message content
   if (message.reference) {
     try {
       const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -142,7 +145,6 @@ client.on("messageCreate", async (message) => {
     }
   }
 
-  // If no reply or failed to fetch, use message after command
   if (!statement) {
     statement = message.content.slice(command.length).trim();
   }
@@ -151,12 +153,9 @@ client.on("messageCreate", async (message) => {
     return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
   }
 
-  // Send initial "thinking..." message
   const sentMessage = await message.reply(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
 
-  // ------------------------
   // Google Fact Check
-  // ------------------------
   const { results, error } = await factCheck(statement);
 
   if (error) {
@@ -181,11 +180,10 @@ client.on("messageCreate", async (message) => {
     });
   }
 
-  // ------------------------
-  // Wikipedia fallback (fuzzy)
-  // ------------------------
-  if (pages.length === 0) {
-    const wiki = await wikipediaSummaryFuzzy(statement);
+  // Wikipedia fallback
+  if (!pages || pages.length === 0) {
+    const wiki = await wikipediaSummaryRelevant(statement);
+
     if (wiki) {
       const embed = new EmbedBuilder()
         .setColor(0x808080)
@@ -196,19 +194,19 @@ client.on("messageCreate", async (message) => {
 
       await sentMessage.edit({ 
         content: `🧐 Fact-checking: "${statement}"\n\nNo official fact-checks found. Showing Wikipedia summary instead:`,
-        embeds: [embed] 
+        embeds: [embed]
       });
-      return;
+      return; // <-- ensures no double reply
     }
 
-    // Still nothing
-    await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n❌ No fact-checks or Wikipedia summary found.`);
+    await sentMessage.edit({
+      content: `🧐 Fact-checking: "${statement}"\n\n❌ No fact-checks or relevant Wikipedia summary found.`,
+      embeds: []
+    });
     return;
   }
 
-  // ------------------------
-  // Pagination for Google results
-  // ------------------------
+  // Pagination
   let index = 0;
   const generateEmbed = (idx) => {
     const r = pages[idx];
@@ -274,8 +272,5 @@ client.login(process.env.DISCORD_TOKEN);
 // ------------------------
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Bot is running!");
-}).listen(PORT, () => {
-  console.log(`Listening on port ${PORT}`);
-});
+  res.writeHead(200, { "Content-Type": "text/plain"
+
