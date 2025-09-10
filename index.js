@@ -1,9 +1,16 @@
 const { 
-  Client, GatewayIntentBits, EmbedBuilder, 
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType,
-  REST, Routes, SlashCommandBuilder
+  Client, 
+  GatewayIntentBits, 
+  EmbedBuilder, 
+  ActionRowBuilder, 
+  ButtonBuilder, 
+  ButtonStyle, 
+  ComponentType, 
+  REST, 
+  Routes, 
+  SlashCommandBuilder 
 } = require("discord.js");
-const fetch = require("node-fetch"); // npm install node-fetch@2
+const fetch = require("node-fetch"); 
 const http = require("http");
 
 // ------------------------
@@ -18,10 +25,10 @@ const client = new Client({
 });
 
 // Hard-coded API keys
-const GOOGLE_API_KEY = "YOUR_GOOGLE_API_KEY";
-const PERPLEXITY_API_KEY = "YOUR_PERPLEXITY_API_KEY";
+const GOOGLE_API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
+const PERPLEXITY_API_KEY = "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";
 
-// Rate limiting: userId -> timestamp
+// Rate limiting
 const cooldowns = {};
 const COOLDOWN_SECONDS = 10;
 
@@ -57,6 +64,7 @@ async function factCheck(statement) {
     if (!response.ok) return { error: `⚠️ Error contacting Fact Check API: ${response.status}` };
     const data = await response.json();
     const claims = data.claims || [];
+
     if (claims.length === 0) return { results: [] };
 
     const results = [];
@@ -71,6 +79,7 @@ async function factCheck(statement) {
         });
       });
     });
+
     return { results };
   } catch (error) {
     console.error(error);
@@ -86,7 +95,7 @@ async function queryPerplexity(statement) {
   const body = {
     model: "sonar",
     messages: [
-      { role: "system", content: "Classify the following statement strictly as either 'True' or 'False'. Provide a short reasoning and include sources if possible. Use the format: \nVerdict: True/False\nReason: <text>\nSources: <list>" },
+      { role: "system", content: "Classify the following statement strictly as either 'True' or 'False'. Provide a short reasoning and include sources if possible. Format: \nVerdict: True/False\nReason: <text>\nSources: <list>" },
       { role: "user", content: statement }
     ]
   };
@@ -101,18 +110,13 @@ async function queryPerplexity(statement) {
       body: JSON.stringify(body)
     });
 
-    if (!res.ok) {
-      console.error(`Perplexity API error: HTTP ${res.status}`);
-      return null;
-    }
-
+    if (!res.ok) return null;
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content || "";
 
     const verdictMatch = content.match(/Verdict:\s*(True|False)/i);
     const verdict = verdictMatch ? verdictMatch[1] : "Other";
-    const color = verdict.toLowerCase() === "true" ? 0x00ff00 :
-                  verdict.toLowerCase() === "false" ? 0xff0000 : 0xffff00;
+    const color = verdict.toLowerCase() === "true" ? 0x00ff00 : verdict.toLowerCase() === "false" ? 0xff0000 : 0xffff00;
 
     const reasonMatch = content.match(/Reason:\s*([\s\S]*?)(?:Sources:|$)/i);
     const reason = reasonMatch ? reasonMatch[1].trim() : "No reasoning provided.";
@@ -149,24 +153,30 @@ async function handlePerplexityFallback(statement, sentMessage) {
     embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
   }
 
-  await sentMessage.edit({
-    content: `🧐 Fact-checking: "${statement}"`,
-    embeds: [embed],
-    components: []
-  });
+  await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [embed], components: [] });
 }
 
 // ------------------------
-// Fact-check runner (shared)
+// Unified Fact-Check Runner
 // ------------------------
 async function runFactCheck(messageOrInteraction, statement) {
-  // Determine if it's a message or interaction
-  const isInteraction = messageOrInteraction.isCommand?.() || false;
+  let sentMessage;
+  const isInteraction = messageOrInteraction.isChatInputCommand?.() || false;
 
-  // Reply and get the message object
-  const sentMessage = isInteraction
-    ? await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`, flags: 64, withResponse: true })
-    : await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...` });
+  if (isInteraction) {
+    sentMessage = await messageOrInteraction.reply({
+      content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`,
+      flags: 64, // ephemeral
+      withResponse: true
+    });
+  } else {
+    sentMessage = await messageOrInteraction.reply({
+      content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`
+    });
+  }
+
+  // Ensure .edit() works
+  if (!sentMessage.edit && isInteraction) sentMessage = await messageOrInteraction.fetchReply();
 
   const { results, error } = await factCheck(statement);
   if (error) {
@@ -174,14 +184,11 @@ async function runFactCheck(messageOrInteraction, statement) {
     return;
   }
 
-  if (!results || results.length === 0) {
-    return handlePerplexityFallback(statement, sentMessage);
-  }
+  if (!results || results.length === 0) return handlePerplexityFallback(statement, sentMessage);
 
   const pages = [];
   results.forEach(r => {
-    const parts = splitText(r.claim, 1000);
-    parts.forEach(p => {
+    splitText(r.claim, 1000).forEach(p => {
       const norm = normalizeGoogleRating(r.rating);
       pages.push({
         claim: p,
@@ -225,10 +232,13 @@ async function runFactCheck(messageOrInteraction, statement) {
     if (i.customId === "next") index++;
     if (i.customId === "prev") index--;
     if (i.customId === "quick") index = 0;
+
     row.components[0].setDisabled(index === 0);
     row.components[1].setDisabled(index === pages.length - 1);
+
     await i.update({ embeds: [generateEmbed(index)], components: [row] });
   });
+
   collector.on("end", async () => {
     row.components.forEach(button => button.setDisabled(true));
     await msg.edit({ components: [row] });
@@ -269,25 +279,21 @@ client.on("messageCreate", async (message) => {
 });
 
 // ------------------------
-// Slash Command Registration
+// Slash Command Registration (GLOBAL)
 // ------------------------
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
-
   const slashCommands = COMMANDS.map(cmd => 
     new SlashCommandBuilder()
-      .setName(cmd.replace("!", "")) 
+      .setName(cmd.replace("!", ""))
       .setDescription(`Fact-check a statement using ${cmd}`)
       .addStringOption(opt => opt.setName("statement").setDescription("Statement to fact-check").setRequired(true))
   );
 
   try {
-    await rest.put(
-      Routes.applicationCommands(client.user.id), // GLOBAL
-      { body: slashCommands }
-    );
+    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
     console.log("✅ Global slash commands registered");
   } catch (err) {
     console.error("Failed to register slash commands:", err);
@@ -295,12 +301,12 @@ client.once("ready", async () => {
 
   client.user.setPresence({
     activities: [{ name: "👀 Rishi & Sav", type: 3 }],
-    status: "online",
+    status: "online"
   });
 });
 
 // ------------------------
-// Interaction Handler
+// Slash Command Handler
 // ------------------------
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -337,4 +343,3 @@ http.createServer((req, res) => {
 }).listen(PORT, () => {
   console.log(`Listening on port ${PORT}`);
 });
-
