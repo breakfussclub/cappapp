@@ -80,7 +80,7 @@ async function factCheck(statement) {
 }
 
 // ------------------------
-// Perplexity Sonar API fallback
+// Perplexity Sonar API fallback (debug version)
 // ------------------------
 async function queryPerplexity(statement) {
   const url = 'https://sonar.perplexity.ai/v1/answer';
@@ -95,15 +95,27 @@ async function queryPerplexity(statement) {
   });
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: headers,
-      body: body,
-    });
+    const response = await fetch(url, { method: 'POST', headers, body });
 
-    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+    // Log status code
+    console.log('Perplexity API status:', response.status);
 
-    const data = await response.json();
+    // Log raw response text
+    const text = await response.text();
+    console.log('Perplexity raw response:', text);
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! Status: ${response.status}`);
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (err) {
+      console.error('Failed to parse JSON:', err);
+      return { error: 'Perplexity returned invalid JSON' };
+    }
+
     if (data.answer) {
       return {
         type: 'text',
