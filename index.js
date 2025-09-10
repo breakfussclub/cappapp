@@ -1,4 +1,7 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, REST, Routes, SlashCommandBuilder } = require("discord.js");
+const { 
+  Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, 
+  REST, Routes, SlashCommandBuilder 
+} = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
 
@@ -13,15 +16,12 @@ const client = new Client({
   ]
 });
 
-// Hard-coded API keys
-const GOOGLE_API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
-const PERPLEXITY_API_KEY = "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";
+const GOOGLE_API_KEY = "YOUR_GOOGLE_API_KEY";
+const PERPLEXITY_API_KEY = "YOUR_PERPLEXITY_API_KEY";
 
-// Rate limiting: userId -> timestamp
 const cooldowns = {};
 const COOLDOWN_SECONDS = 10;
 
-// Command aliases
 const COMMANDS = ["!cap", "!fact", "!verify"];
 
 // ------------------------
@@ -155,12 +155,16 @@ async function handlePerplexityFallback(statement, sentMessage) {
 }
 
 // ------------------------
-// Fact-check runner (shared by message + slash commands)
+// Fact-check runner (shared by message + slash)
 async function runFactCheck(messageOrInteraction, statement) {
-  const sentMessage = await messageOrInteraction.reply({ 
-    content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`, 
-    withResponse: true 
-  });
+  // Reply differently depending on whether this is an Interaction or Message
+  let sentMessage;
+  if (messageOrInteraction.isChatInputCommand?.()) {
+    await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`, ephemeral: false });
+    sentMessage = await messageOrInteraction.fetchReply(); // always get the Message object
+  } else {
+    sentMessage = await messageOrInteraction.reply({ content: `🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`, fetchReply: true });
+  }
 
   const { results, error } = await factCheck(statement);
 
@@ -173,6 +177,7 @@ async function runFactCheck(messageOrInteraction, statement) {
     return handlePerplexityFallback(statement, sentMessage);
   }
 
+  // Google results embed
   const pages = [];
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
@@ -242,7 +247,6 @@ client.on("messageCreate", async (message) => {
 
   const allowedUserId = "306197826575138816";
   const allowedRoleId = "1410526844318388336";
-
   const member = message.member;
   if (message.author.id !== allowedUserId && !member.roles.cache.has(allowedRoleId)) return;
 
@@ -270,7 +274,7 @@ client.on("messageCreate", async (message) => {
 });
 
 // ------------------------
-// Slash Command Registration (GLOBAL)
+// Global Slash Command Registration
 // ------------------------
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
@@ -286,12 +290,12 @@ client.once("ready", async () => {
 
   try {
     await rest.put(
-      Routes.applicationCommands(client.user.id), // Global registration
+      Routes.applicationCommands(client.user.id), // GLOBAL commands
       { body: slashCommands }
     );
     console.log("✅ Global slash commands registered");
   } catch (err) {
-    console.error("Failed to register global slash commands:", err);
+    console.error("Failed to register slash commands:", err);
   }
 
   client.user.setPresence({
@@ -309,7 +313,6 @@ client.on("interactionCreate", async (interaction) => {
   const allowedUserId = "306197826575138816";
   const allowedRoleId = "1410526844318388336";
   const member = interaction.member;
-
   if (interaction.user.id !== allowedUserId && !member.roles.cache.has(allowedRoleId)) {
     return interaction.reply({ content: "❌ You are not allowed to use this command.", ephemeral: true });
   }
