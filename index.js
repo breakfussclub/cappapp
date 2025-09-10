@@ -196,7 +196,7 @@ client.on("messageCreate", async (message) => {
         content: `🧐 Fact-checking: "${statement}"\n\nNo official fact-checks found. Showing Wikipedia summary instead:`,
         embeds: [embed]
       });
-      return; // <-- ensures no double reply
+      return;
     }
 
     await sentMessage.edit({
@@ -272,5 +272,8 @@ client.login(process.env.DISCORD_TOKEN);
 // ------------------------
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain"
-
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Bot is running!");
+}).listen(PORT, () => {
+  console.log(`Listening on port ${PORT}`);
+});
