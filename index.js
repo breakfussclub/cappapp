@@ -1,4 +1,8 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, REST, Routes, SlashCommandBuilder } = require("discord.js");
+const { 
+  Client, GatewayIntentBits, EmbedBuilder, 
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, 
+  REST, Routes, SlashCommandBuilder 
+} = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
 
@@ -14,8 +18,8 @@ const client = new Client({
 });
 
 // Hard-coded API keys
-const GOOGLE_API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
-const PERPLEXITY_API_KEY = "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";
+const GOOGLE_API_KEY = "YOUR_GOOGLE_API_KEY";
+const PERPLEXITY_API_KEY = "YOUR_PERPLEXITY_API_KEY";
 
 // Rate limiting: userId -> timestamp
 const cooldowns = {};
@@ -232,8 +236,7 @@ async function runFactCheck(messageOrInteraction, statement) {
 }
 
 // ------------------------
-// Message Handler
-// ------------------------
+// Message Handler (prefix commands)
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
@@ -267,30 +270,25 @@ client.on("messageCreate", async (message) => {
 });
 
 // ------------------------
-// Slash Command Registration (Guild-specific)
-// ------------------------
+// Slash Command Registration (Global only)
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
-  const slashCommands = COMMANDS.map(cmd =>
+  const slashCommands = COMMANDS.map(cmd => 
     new SlashCommandBuilder()
-      .setName(cmd.replace("!", "")) // remove prefix
+      .setName(cmd.replace("!", "")) // remove prefix for slash
       .setDescription(`Fact-check a statement using ${cmd}`)
-      .addStringOption(opt =>
-        opt.setName("statement")
-           .setDescription("Statement to fact-check")
-           .setRequired(true)
-      )
+      .addStringOption(opt => opt.setName("statement").setDescription("Statement to fact-check").setRequired(true))
   );
 
   try {
     await rest.put(
-      Routes.applicationGuildCommands(client.user.id, "917154833750978562"), // register only in your test server
+      Routes.applicationCommands(client.user.id), // Global commands
       { body: slashCommands }
     );
-    console.log("✅ Slash commands registered for guild 917154833750978562");
+    console.log("✅ Global slash commands registered");
   } catch (err) {
     console.error("Failed to register slash commands:", err);
   }
@@ -302,8 +300,7 @@ client.once("ready", async () => {
 });
 
 // ------------------------
-// Interaction Handler
-// ------------------------
+// Interaction Handler (slash commands)
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -327,12 +324,10 @@ client.on("interactionCreate", async (interaction) => {
 
 // ------------------------
 // Discord login
-// ------------------------
 client.login(process.env.DISCORD_TOKEN);
 
 // ------------------------
 // Dummy HTTP server for Render
-// ------------------------
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
