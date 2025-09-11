@@ -1,21 +1,20 @@
-const { REST, Routes } = require('discord.js');
-require('dotenv').config();
+// cleanup-commands.js
+const { REST, Routes } = require("discord.js");
 
-const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+// 🔑 Replace these with your bot’s info
+const TOKEN = "1407254273925845073";
+const CLIENT_ID = "MTQwNzI1NDI3MzkyNTg0NTA3Mw.G1uPgT.MBJf-1ykSBokkZtuBo9M3mySw0hlpseZP7zc9o";
+
+const rest = new REST({ version: "10" }).setToken(TOKEN);
 
 (async () => {
   try {
-    const appId = '1407254273925845073'; // Replace with your bot's application/client ID
+    console.log("🧹 Clearing ALL global application (slash) commands...");
 
-    // Wipe global commands
-    await rest.put(Routes.applicationCommands(appId), { body: [] });
-    console.log('✅ All global slash commands removed.');
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
 
-    // (Optional) Wipe from a specific guild (if you had test guild commands)
-    const guildId = '917154833750978562'; // Replace with your test server ID if needed
-    await rest.put(Routes.applicationGuildCommands(appId, guildId), { body: [] });
-    console.log(`✅ All slash commands removed from guild ${guildId}`);
+    console.log("✅ Successfully cleared all global commands.");
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error clearing commands:", err);
   }
 })();
