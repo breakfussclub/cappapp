@@ -1,4 +1,14 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require("discord.js");
+const { 
+  Client, 
+  GatewayIntentBits, 
+  EmbedBuilder, 
+  ActionRowBuilder, 
+  ButtonBuilder, 
+  ButtonStyle, 
+  ComponentType,
+  REST,
+  Routes
+} = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
 
@@ -13,7 +23,7 @@ const client = new Client({
   ]
 });
 
-// Hard-coded API keys
+// Hard-coded API keys (you can move these to env if you want)
 const GOOGLE_API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
 const PERPLEXITY_API_KEY = "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";
 
@@ -37,20 +47,13 @@ function splitText(text, maxLength = 1000) {
 
 function normalizeGoogleRating(rating) {
   if (!rating) return { verdict: "Other", color: 0xffff00 };
-
   const r = rating.toLowerCase();
-
-  // True bucket
   if (r.includes("true") || r.includes("correct") || r.includes("accurate")) {
     return { verdict: "True", color: 0x00ff00 };
   }
-
-  // False bucket
   if (r.includes("false") || r.includes("incorrect") || r.includes("pants on fire") || r.includes("hoax")) {
     return { verdict: "False", color: 0xff0000 };
   }
-
-  // Other/uncertain
   return { verdict: "Other", color: 0xffff00 };
 }
 
@@ -64,7 +67,6 @@ async function factCheck(statement) {
     if (!response.ok) return { error: `⚠️ Error contacting Fact Check API: ${response.status}` };
     const data = await response.json();
     const claims = data.claims || [];
-
     if (claims.length === 0) return { results: [] };
 
     const results = [];
@@ -79,7 +81,6 @@ async function factCheck(statement) {
         });
       });
     });
-
     return { results };
   } catch (error) {
     console.error(error);
@@ -118,17 +119,14 @@ async function queryPerplexity(statement) {
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content || "";
 
-    // Extract verdict
     const verdictMatch = content.match(/Verdict:\s*(True|False)/i);
     const verdict = verdictMatch ? verdictMatch[1] : "Other";
     const color = verdict.toLowerCase() === "true" ? 0x00ff00 :
                   verdict.toLowerCase() === "false" ? 0xff0000 : 0xffff00;
 
-    // Extract reason
     const reasonMatch = content.match(/Reason:\s*([\s\S]*?)(?:Sources:|$)/i);
     const reason = reasonMatch ? reasonMatch[1].trim() : "No reasoning provided.";
 
-    // Extract sources
     const sourcesMatch = content.match(/Sources:\s*([\s\S]*)/i);
     const sourcesText = sourcesMatch ? sourcesMatch[1].trim() : "";
     const sources = sourcesText.split("\n").filter(s => s.trim().length > 0);
@@ -185,16 +183,13 @@ client.on("messageCreate", async (message) => {
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
   if (!command) return;
 
-  // Rate limiting
   const now = Date.now();
   if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
     return message.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
   }
   cooldowns[message.author.id] = now;
 
-  // Determine statement
   let statement = null;
-
   if (message.reference) {
     try {
       const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -217,13 +212,9 @@ client.on("messageCreate", async (message) => {
   }
 
   if (!results || results.length === 0) {
-    // Trigger Perplexity fallback ONLY if Google returns no results
     return handlePerplexityFallback(statement, sentMessage);
   }
 
-  // ------------------------
-  // Google results embed
-  // ------------------------
   const pages = [];
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
@@ -267,7 +258,6 @@ client.on("messageCreate", async (message) => {
   const msg = await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [generateEmbed(index)], components: [row] });
 
   const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000 });
-
   collector.on("collect", async i => {
     if (i.customId === "next") index++;
     if (i.customId === "prev") index--;
@@ -278,7 +268,6 @@ client.on("messageCreate", async (message) => {
 
     await i.update({ embeds: [generateEmbed(index)], components: [row] });
   });
-
   collector.on("end", async () => {
     row.components.forEach(button => button.setDisabled(true));
     await msg.edit({ components: [row] });
@@ -295,6 +284,26 @@ client.once("ready", () => {
     status: "online",
   });
 });
+
+// ------------------------
+// Slash Command Cleanup
+// ------------------------
+const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+(async () => {
+  try {
+    console.log("🧹 Clearing ALL global slash commands...");
+    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
+    console.log("✅ Global slash commands cleared!");
+
+    if (process.env.GUILD_ID) {
+      console.log(`🧹 Clearing ALL guild slash commands for guild ${process.env.GUILD_ID}...`);
+      await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: [] });
+      console.log("✅ Guild slash commands cleared!");
+    }
+  } catch (err) {
+    console.error("❌ Error clearing slash commands:", err);
+  }
+})();
 
 // ------------------------
 // Discord login
