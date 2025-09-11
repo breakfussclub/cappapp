@@ -5,9 +5,7 @@ const {
   ActionRowBuilder, 
   ButtonBuilder, 
   ButtonStyle, 
-  ComponentType,
-  REST,
-  Routes
+  ComponentType 
 } = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
@@ -284,26 +282,6 @@ client.once("ready", () => {
     status: "online",
   });
 });
-
-// ------------------------
-// Slash Command Cleanup
-// ------------------------
-const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
-(async () => {
-  try {
-    console.log("🧹 Clearing ALL global slash commands...");
-    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
-    console.log("✅ Global slash commands cleared!");
-
-    if (process.env.GUILD_ID) {
-      console.log(`🧹 Clearing ALL guild slash commands for guild ${process.env.GUILD_ID}...`);
-      await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: [] });
-      console.log("✅ Guild slash commands cleared!");
-    }
-  } catch (err) {
-    console.error("❌ Error clearing slash commands:", err);
-  }
-})();
 
 // ------------------------
 // Discord login
