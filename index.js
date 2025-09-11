@@ -149,7 +149,7 @@ async function handlePerplexityFallback(statement, sentMessage) {
 
   const embed = new EmbedBuilder()
     .setColor(perplexityResult.color)
-    .setTitle(`Fact-Check Result (Perplexity)`)
+    .setTitle(`Fact-Check Result`)
     .addFields(
       { name: "Claim", value: `> ${statement}` },
       { name: "Verdict", value: perplexityResult.verdict },
