@@ -31,8 +31,8 @@ const COMMANDS = ["!cap", "!fact", "!verify"];
 // ------------------------
 // Auto-Scan Config
 // ------------------------
-const WATCHED_USER_IDS = ["123456789012345678"];      // Users to auto-scan
-const WATCHED_CHANNEL_IDS = ["987654321098765432"];   // Channels to monitor
+const WATCHED_USER_IDS = ["1236556523522752516"];      // Users to auto-scan
+const WATCHED_CHANNEL_IDS = ["1041130370273390603"];   // Channels to monitor
 const NEGATION_WORDS = ["no", "not", "never", "none", "cannot", "didn't", "doesn't", "isn't", "wasn't", "aren't", "won't"];
 const CHANNEL_BUFFERS = {}; // channelId -> array of last 5 messages for context
 
