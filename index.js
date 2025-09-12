@@ -222,10 +222,10 @@ setInterval(async () => {
         // No Google fact-check results; fallback to Perplexity AI
         const perplexityResult = await queryPerplexity(combinedStatement);
         if (perplexityResult && perplexityResult.verdict.toLowerCase() === "false") {
-          // Send embed alert in original channel
+          // Send embed alert in original channel (generic title and no source mention)
           const embed = new EmbedBuilder()
             .setColor(perplexityResult.color)
-            .setTitle(`Perplexity AI Fact-Check Alert for <@${userId}>`)
+            .setTitle(`Fact-Check Alert for <@${userId}>`)
             .addFields(
               { name: "Claim", value: `> ${combinedStatement}` },
               { name: "Verdict", value: perplexityResult.verdict },
@@ -236,13 +236,13 @@ setInterval(async () => {
             embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
           }
           await channel.send({
-            content: `⚠️ Perplexity AI fact-check alert: False claim detected from <@${userId}> in recent messages.`,
+            content: `⚠️ Fact-check alert: False claim detected from <@${userId}> in recent messages.`,
             embeds: [embed]
           });
-          // Notify summary channel
+          // Notify summary channel with generic wording
           const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
           if (notifyChannel) {
-            await notifyChannel.send(`⚠️ Perplexity AI fact-check: Detected a false claim from <@${userId}> in <#${channelId}>.`);
+            await notifyChannel.send(`⚠️ Fact-check: Detected a false claim from <@${userId}> in <#${channelId}>.`);
           }
         }
       } else {
