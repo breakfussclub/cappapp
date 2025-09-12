@@ -211,22 +211,47 @@ setInterval(async () => {
       // Combine buffered user messages into a single statement block
       const combinedStatement = messages.join("\n");
 
-      // Run fact check
+      // Run fact check via Google API
       const { results, error } = await factCheck(combinedStatement);
       if (error) {
         console.error(`Fact-check error for user ${userId} in channel ${channelId}:`, error);
         continue;
       }
 
-      if (results && results.length > 0) {
-        // Filter for false claims
+      if (!results || results.length === 0) {
+        // No Google fact-check results; fallback to Perplexity AI
+        const perplexityResult = await queryPerplexity(combinedStatement);
+        if (perplexityResult && perplexityResult.verdict.toLowerCase() === "false") {
+          // Send embed alert in original channel
+          const embed = new EmbedBuilder()
+            .setColor(perplexityResult.color)
+            .setTitle(`Perplexity AI Fact-Check Alert for <@${userId}>`)
+            .addFields(
+              { name: "Claim", value: `> ${combinedStatement}` },
+              { name: "Verdict", value: perplexityResult.verdict },
+              { name: "Reasoning", value: perplexityResult.reason.slice(0, 1000) }
+            )
+            .setTimestamp();
+          if (perplexityResult.sources.length > 0) {
+            embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
+          }
+          await channel.send({
+            content: `⚠️ Perplexity AI fact-check alert: False claim detected from <@${userId}> in recent messages.`,
+            embeds: [embed]
+          });
+          // Notify summary channel
+          const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
+          if (notifyChannel) {
+            await notifyChannel.send(`⚠️ Perplexity AI fact-check: Detected a false claim from <@${userId}> in <#${channelId}>.`);
+          }
+        }
+      } else {
+        // Google fact-check results present; filter for false claims
         const falseClaims = results.filter(r => normalizeGoogleRating(r.rating).verdict === "False");
 
         if (falseClaims.length > 0) {
-          // Compose embeds and alert message for the channel
+          // Compose embeds for false claims
           const pages = composeFactCheckEmbed(combinedStatement, falseClaims);
-
-          // Send initial alert message with embed for the first claim/block
           const r = pages[0];
           const embed = new EmbedBuilder()
             .setColor(r.color)
@@ -241,16 +266,20 @@ setInterval(async () => {
             )
             .setTimestamp();
 
-          await channel.send({ content: `⚠️ Fact-check alert: False claims detected from <@${userId}> in recent messages.`, embeds: [embed] });
+          await channel.send({
+            content: `⚠️ Fact-check alert: False claims detected from <@${userId}> in recent messages.`,
+            embeds: [embed]
+          });
 
-          // Additionally, send a summary message to the notify channel
+          // Notify summary channel
           const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
           if (notifyChannel) {
             await notifyChannel.send(`⚠️ Fact-check: Detected ${falseClaims.length} false claim(s) from <@${userId}> in <#${channelId}>.`);
           }
         }
       }
-      // Clear buffered messages for this user/channel after checking
+
+      // Clear buffered messages for this user and channel
       CHANNEL_BUFFERS[channelId][userId] = [];
     }
   }
