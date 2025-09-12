@@ -26,8 +26,8 @@ const PERPLEXITY_API_KEY = "pplx-Po5yLPsBFNxmLFw7WtucgRPNypIRymo8JsmykkBOiDbS2fs
 
 const COOLDOWN_MS = 30000; // 30 seconds per user
 const COMMANDS = ["!cap", "!fact", "!verify"];
-const WATCHED_USER_IDS = ["1236556523522752516"];
-const WATCHED_CHANNEL_IDS = ["1041130370273390603"];
+const WATCHED_USER_IDS = ["306197826575138816"];
+const WATCHED_CHANNEL_IDS = ["1410526844318388336"];
 
 // Extended negation words list
 const NEGATION_WORDS = [
@@ -39,18 +39,15 @@ const NEGATION_WORDS = [
 // ------------------------
 // Buffers & cooldowns
 // ------------------------
-const userBuffers = {};      // per-user batching
-const cooldowns = {};        // per-user cooldown
-const channelBuffers = {};   // per-channel for context
+const cooldowns = {};
+const channelBuffers = {}; // per-channel for context
 
 // ------------------------
 // Helpers
 // ------------------------
 function splitText(text, maxLength = 1000) {
   const parts = [];
-  for (let i = 0; i < text.length; i += maxLength) {
-    parts.push(text.slice(i, i + maxLength));
-  }
+  for (let i = 0; i < text.length; i += maxLength) parts.push(text.slice(i, i + maxLength));
   return parts;
 }
 
@@ -144,6 +141,8 @@ async function handlePerplexityFallback(statement, sentMessage) {
   await sentMessage.edit({ content: `🧐 Fact-checking: "${statement}"`, embeds: [embed], components: [] });
 }
 
+// ------------------------
+// Run fact-check (shared)
 async function runFactCheck(statement, channel) {
   const sentMessage = await channel.send(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
   const { results, error } = await factCheck(statement);
@@ -215,6 +214,7 @@ client.on("messageCreate", async (message) => {
   const allowedUserId = "306197826575138816";
   const allowedRoleId = "1410526844318388336";
   const member = message.member;
+
   if (message.author.id !== allowedUserId && !member.roles.cache.has(allowedRoleId)) return;
 
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
@@ -225,15 +225,17 @@ client.on("messageCreate", async (message) => {
   cooldowns[message.author.id] = now;
 
   let statement = null;
-  if (message.reference) {
-    try {
-      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
-      if (repliedMessage) statement = repliedMessage.content.trim();
-    } catch (err) { console.error("Failed to fetch replied-to message:", err); }
+
+  // Manual command
+  if (command) {
+    statement = message.content.slice(command.length).trim();
+  }
+  // Auto-scan for negation/short messages
+  else if (NEGATION_WORDS.some(w => message.content.toLowerCase().includes(w)) || message.content.length < 30) {
+    statement = message.content.trim();
   }
 
-  if (!statement && command) statement = message.content.slice(command.length).trim();
-  if (!statement) return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
+  if (!statement) return; // skip normal messages
 
   // Initialize channel buffer
   if (!channelBuffers[message.channel.id]) channelBuffers[message.channel.id] = [];
@@ -243,9 +245,8 @@ client.on("messageCreate", async (message) => {
   channelBuffers[message.channel.id].push({ content: statement, keywords });
   if (channelBuffers[message.channel.id].length > 5) channelBuffers[message.channel.id].shift();
 
-  // Check for negation words
+  // Negation context handling
   if (NEGATION_WORDS.some(w => statement.toLowerCase().includes(w))) {
-    // Find most relevant prior message
     let relevantMsg = null;
     let maxOverlap = 0;
     const buffer = channelBuffers[message.channel.id];
