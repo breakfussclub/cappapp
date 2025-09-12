@@ -208,6 +208,10 @@ setInterval(async () => {
       const channel = await client.channels.fetch(channelId).catch(() => null);
       if (!channel) continue;
 
+      // Try fetching member to get username
+      const member = await channel.guild.members.fetch(userId).catch(() => null);
+      const username = member ? member.user.username : `User ID: ${userId}`;
+
       // Combine buffered user messages into a single statement block
       const combinedStatement = messages.join("\n");
 
@@ -225,7 +229,7 @@ setInterval(async () => {
           // Send embed alert in original channel (generic title and no source mention)
           const embed = new EmbedBuilder()
             .setColor(perplexityResult.color)
-            .setTitle(`Fact-Check Alert for <@${userId}>`)
+            .setTitle(`Fact-Check Alert for ${username}`)
             .addFields(
               { name: "Claim", value: `> ${combinedStatement}` },
               { name: "Verdict", value: perplexityResult.verdict },
@@ -255,7 +259,7 @@ setInterval(async () => {
           const r = pages[0];
           const embed = new EmbedBuilder()
             .setColor(r.color)
-            .setTitle(`Fact-Check Alert for <@${userId}>`)
+            .setTitle(`Fact-Check Alert for ${username}`)
             .addFields(
               { name: "Claim", value: `> ${r.claim}` },
               { name: "Verdict", value: r.verdict, inline: true },
