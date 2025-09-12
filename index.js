@@ -26,8 +26,8 @@ const PERPLEXITY_API_KEY = "pplx-Po5yLPsBFNxmLFw7WtucgRPNypIRymo8JsmykkBOiDbS2fs
 
 const COOLDOWN_MS = 30000; // 30 seconds per user
 const COMMANDS = ["!cap", "!fact", "!verify"];
-const WATCHED_USER_IDS = ["306197826575138816"];
-const WATCHED_CHANNEL_IDS = ["1410526844318388336"];
+const WATCHED_USER_IDS = ["1236556523522752516"];
+const WATCHED_CHANNEL_IDS = ["1041130370273390603"];
 
 // Extended negation words list
 const NEGATION_WORDS = [
