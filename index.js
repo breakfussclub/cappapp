@@ -31,10 +31,10 @@ const COMMANDS = ["!cap", "!fact", "!verify"];
 // ------------------------
 // Auto-Scan Config
 // ------------------------
-const WATCHED_USER_IDS = ["1236556523522752516"];
-const WATCHED_CHANNEL_IDS = ["1041130370273390603"];
+const WATCHED_USER_IDS = ["123456789012345678"];      // Users to auto-scan
+const WATCHED_CHANNEL_IDS = ["987654321098765432"];   // Channels to monitor
 const NEGATION_WORDS = ["no", "not", "never", "none", "cannot", "didn't", "doesn't", "isn't", "wasn't", "aren't", "won't"];
-const CHANNEL_BUFFERS = {}; // channelId -> array of last 5 messages with keywords
+const CHANNEL_BUFFERS = {}; // channelId -> array of last 5 messages for context
 
 // ------------------------
 // Helpers
@@ -172,14 +172,10 @@ async function handlePerplexityFallback(statement, sentMessage) {
 async function handleAutoScan(message, statement) {
   const channelId = message.channel.id;
 
-  // Initialize buffer
   if (!CHANNEL_BUFFERS[channelId]) CHANNEL_BUFFERS[channelId] = [];
-  
-  // Store message with keywords for context (split words)
   const keywords = statement.toLowerCase().split(/\s+/);
   CHANNEL_BUFFERS[channelId].push({ content: statement, keywords });
-  
-  // Keep last 5 messages
+
   if (CHANNEL_BUFFERS[channelId].length > 5) CHANNEL_BUFFERS[channelId].shift();
 
   // Combine with previous messages for context
@@ -283,11 +279,10 @@ client.on("messageCreate", async (message) => {
   const isWatchedUser = WATCHED_USER_IDS.includes(message.author.id);
   const isWatchedChannel = WATCHED_CHANNEL_IDS.includes(message.channel.id);
 
-  // Manual command for authorized users
-  if (isAuthorized) {
-    const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
-    if (!command) return;
+  const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
 
+  // Only trigger manual command if user is authorized and used a command
+  if (command && isAuthorized) {
     const now = Date.now();
     if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
       return message.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
@@ -299,10 +294,13 @@ client.on("messageCreate", async (message) => {
       try {
         const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
         if (repliedMessage) statement = repliedMessage.content.trim();
-      } catch (err) { console.error(err); }
+      } catch (err) {
+        console.error("Failed to fetch replied-to message:", err);
+      }
     }
+
     if (!statement) statement = message.content.slice(command.length).trim();
-    if (!statement) return message.reply("⚠️ Please provide a statement to fact-check.");
+    if (!statement) return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
 
     await runFactCheck(statement, message.channel);
     return;
@@ -310,23 +308,37 @@ client.on("messageCreate", async (message) => {
 
   // Auto-scan for watched users
   if (isWatchedUser && isWatchedChannel) {
-    const content = message.content.trim();
-    if (content.length < 30 || NEGATION_WORDS.some(w => content.toLowerCase().includes(w))) {
-      await handleAutoScan(message, content);
-    }
+    await handleAutoScan(message, message.content.trim());
   }
 });
 
 // ------------------------
-// Bot ready
+// Bot Startup
 // ------------------------
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  client.user.setPresence({
-    activities: [{ name: "👀 Rishi & Sav", type: 3 }],
-    status: "online",
-  });
-});
+(async () => {
+  try {
+    const token = process.env.DISCORD_TOKEN;
+    if (!token) throw new Error("DISCORD_TOKEN environment variable is not set!");
 
-// ------------------------
-// Discord login
+    await client.login(token);
+
+    client.once("ready", () => {
+      console.log(`Logged in as ${client.user.tag}`);
+      client.user.setPresence({
+        activities: [{ name: "👀 Rishi & Sav", type: 3 }],
+        status: "online",
+      });
+    });
+
+    const PORT = process.env.PORT || 3000;
+    http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("Bot is running!");
+    }).listen(PORT, () => {
+      console.log(`Listening on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Startup error:", err);
+    process.exit(1);
+  }
+})();
