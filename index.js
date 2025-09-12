@@ -94,7 +94,7 @@ async function queryPerplexity(statement) {
   const body = {
     model: "sonar",
     messages: [
-      { role: "system", content: "Classify the following statement strictly as either 'True' or 'False'. Provide a short reasoning and include sources if possible. Use the format: \nVerdict: True/False\nReason: <text>\nSources: <list>" },
+      { role: "system", content: "Classify the following statement as one of: 'True', 'False', 'Misleading', or 'Other'. Always provide a short reasoning and sources. Format:\nVerdict: True/False/Misleading/Other\nReason: <text>\nSources: <list>" },
       { role: "user", content: statement }
     ]
   };
@@ -117,10 +117,12 @@ async function queryPerplexity(statement) {
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content || "";
 
-    const verdictMatch = content.match(/Verdict:\s*(True|False)/i);
+    const verdictMatch = content.match(/Verdict:\s*(True|False|Misleading|Other)/i);
     const verdict = verdictMatch ? verdictMatch[1] : "Other";
+
     const color = verdict.toLowerCase() === "true" ? 0x00ff00 :
-                  verdict.toLowerCase() === "false" ? 0xff0000 : 0xffff00;
+                  verdict.toLowerCase() === "false" ? 0xff0000 :
+                  0xffff00; // yellow for misleading/other
 
     const reasonMatch = content.match(/Reason:\s*([\s\S]*?)(?:Sources:|$)/i);
     const reason = reasonMatch ? reasonMatch[1].trim() : "No reasoning provided.";
