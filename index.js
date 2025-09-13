@@ -37,7 +37,7 @@ const NEGATION_WORDS = ["no", "not", "never", "none", "cannot", "didn't", "doesn
 const CHANNEL_BUFFERS = {};
 
 // ------------------------
-// Helpers for text processing (from before)
+// Helpers for text processing
 const STOPWORDS = new Set([
   "the","and","is","in","at","of","a","to","for","on","with","as","by","that","this","from",
   "it","an","be","are","was","were","has","have","had","but","or","not","no","if","then",
@@ -75,6 +75,7 @@ function normalizeGoogleRating(rating) {
   const r = rating.toLowerCase();
   if (r.includes("true") || r.includes("correct") || r.includes("accurate")) return { verdict: "True", color: 0x00ff00 };
   if (r.includes("false") || r.includes("incorrect") || r.includes("pants on fire") || r.includes("hoax")) return { verdict: "False", color: 0xff0000 };
+  if (r.includes("misleading")) return { verdict: "Misleading", color: 0xffff00 };
   return { verdict: "Other", color: 0xffff00 };
 }
 // ------------------------
@@ -105,9 +106,8 @@ async function factCheck(statement) {
     return { error: "⚠️ An error occurred while contacting the Fact Check API." };
   }
 }
-
 // ------------------------
-// Perplexity Fallback (unchanged)
+// Perplexity Fallback
 async function queryPerplexity(statement) {
   const url = "https://api.perplexity.ai/chat/completions";
   const body = {
@@ -148,6 +148,7 @@ async function queryPerplexity(statement) {
     return null;
   }
 }
+// ------------------------
 async function handlePerplexityFallback(statement, sentMessage) {
   const perplexityResult = await queryPerplexity(statement);
   if (!perplexityResult) {
@@ -172,11 +173,9 @@ async function handlePerplexityFallback(statement, sentMessage) {
     components: []
   });
 }
-
 // ------------------------
 // Compose embed for fact-check result similar to manual checks
 function composeFactCheckEmbed(statement, results) {
-  // Collect pages of results for pagination and embeds
   const pages = [];
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
@@ -195,10 +194,8 @@ function composeFactCheckEmbed(statement, results) {
   });
   return pages;
 }
-
 // ------------------------
-// Batch fact-check buffered messages per user/channel every period
-const FACT_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute interval (testing)
+const FACT_CHECK_INTERVAL_MS = 60 * 1000; // 1-minute interval (testing)
 
 setInterval(async () => {
   for (const [channelId, users] of Object.entries(CHANNEL_BUFFERS)) {
@@ -208,14 +205,11 @@ setInterval(async () => {
       const channel = await client.channels.fetch(channelId).catch(() => null);
       if (!channel) continue;
 
-      // Try fetching member to get username
       const member = await channel.guild.members.fetch(userId).catch(() => null);
       const username = member ? member.user.username : `User ID: ${userId}`;
 
-      // Combine buffered user messages into a single statement block
       const combinedStatement = messages.join("\n");
 
-      // Run fact check via Google API
       const { results, error } = await factCheck(combinedStatement);
       if (error) {
         console.error(`Fact-check error for user ${userId} in channel ${channelId}:`, error);
@@ -223,10 +217,8 @@ setInterval(async () => {
       }
 
       if (!results || results.length === 0) {
-        // No Google fact-check results; fallback to Perplexity AI
         const perplexityResult = await queryPerplexity(combinedStatement);
-        if (perplexityResult && perplexityResult.verdict.toLowerCase() === "false") {
-          // Send embed alert in original channel (generic title and no source mention)
+        if (perplexityResult && (perplexityResult.verdict.toLowerCase() === "false" || perplexityResult.verdict.toLowerCase() === "misleading")) {
           const embed = new EmbedBuilder()
             .setColor(perplexityResult.color)
             .setTitle(`Fact-Check Alert for ${username}`)
@@ -240,22 +232,22 @@ setInterval(async () => {
             embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
           }
           await channel.send({
-            content: `⚠️ Fact-check alert: False claim detected from <@${userId}> in recent messages.`,
+            content: `⚠️ Fact-check alert: False or misleading claim detected from <@${userId}> in recent messages.`,
             embeds: [embed]
           });
-          // Notify summary channel with generic wording
           const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
           if (notifyChannel) {
-            await notifyChannel.send(`⚠️ Fact-check: Detected a false claim from <@${userId}> in <#${channelId}>.`);
+            await notifyChannel.send(`⚠️ Fact-check: Detected a false or misleading claim from <@${userId}> in <#${channelId}>.`);
           }
         }
       } else {
-        // Google fact-check results present; filter for false claims
-        const falseClaims = results.filter(r => normalizeGoogleRating(r.rating).verdict === "False");
+        const falseOrMisleadingClaims = results.filter(r => {
+          const norm = normalizeGoogleRating(r.rating);
+          return norm.verdict === "False" || norm.verdict === "Misleading";
+        });
 
-        if (falseClaims.length > 0) {
-          // Compose embeds for false claims
-          const pages = composeFactCheckEmbed(combinedStatement, falseClaims);
+        if (falseOrMisleadingClaims.length > 0) {
+          const pages = composeFactCheckEmbed(combinedStatement, falseOrMisleadingClaims);
           const r = pages[0];
           const embed = new EmbedBuilder()
             .setColor(r.color)
@@ -271,26 +263,21 @@ setInterval(async () => {
             .setTimestamp();
 
           await channel.send({
-            content: `⚠️ Fact-check alert: False claims detected from <@${userId}> in recent messages.`,
+            content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in recent messages.`,
             embeds: [embed]
           });
 
-          // Notify summary channel
           const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
           if (notifyChannel) {
-            await notifyChannel.send(`⚠️ Fact-check: Detected ${falseClaims.length} false claim(s) from <@${userId}> in <#${channelId}>.`);
+            await notifyChannel.send(`⚠️ Fact-check: Detected ${falseOrMisleadingClaims.length} false or misleading claim(s) from <@${userId}> in <#${channelId}>.`);
           }
         }
       }
-
-      // Clear buffered messages for this user and channel
       CHANNEL_BUFFERS[channelId][userId] = [];
     }
   }
 }, FACT_CHECK_INTERVAL_MS);
-
 // ------------------------
-// Message Handler: buffer watched user messages without immediate fact-check
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   const member = message.member;
@@ -298,7 +285,6 @@ client.on("messageCreate", async (message) => {
   const isWatchedUser = WATCHED_USER_IDS.includes(message.author.id);
   const isWatchedChannel = WATCHED_CHANNEL_IDS.includes(message.channel.id);
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
-  // Manual commands behave as before
   if (command && isAuthorized) {
     const now = Date.now();
     if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
@@ -319,31 +305,66 @@ client.on("messageCreate", async (message) => {
     await runFactCheck(statement, message.channel);
     return;
   }
-  // Buffer messages from watched users in watched channels
   if (isWatchedUser && isWatchedChannel) {
     if (!CHANNEL_BUFFERS[message.channel.id]) CHANNEL_BUFFERS[message.channel.id] = {};
     if (!CHANNEL_BUFFERS[message.channel.id][message.author.id]) CHANNEL_BUFFERS[message.channel.id][message.author.id] = [];
     CHANNEL_BUFFERS[message.channel.id][message.author.id].push(message.content.trim());
   }
 });
-
 // ------------------------
-// Manual runFactCheck function from your original code (unchanged)
 async function runFactCheck(statement, channel) {
   const sentMessage = await channel.send(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
   const { results, error } = await factCheck(statement);
+  const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
+
   if (error) {
     await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
     return;
   }
   if (!results || results.length === 0) {
-    return handlePerplexityFallback(statement, sentMessage);
+    const perplexityResult = await queryPerplexity(statement);
+    if (!perplexityResult) {
+      await sentMessage.edit(`❌ Could not get a response from Perplexity.`);
+      return;
+    }
+    const embed = new EmbedBuilder()
+      .setColor(perplexityResult.color)
+      .setTitle(`Fact-Check Result`)
+      .addFields(
+        { name: "Claim", value: `> ${statement}` },
+        { name: "Verdict", value: perplexityResult.verdict },
+        { name: "Reasoning", value: perplexityResult.reason.slice(0, 1000) }
+      )
+      .setTimestamp();
+    if (perplexityResult.sources.length > 0) {
+      embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
+    }
+    await sentMessage.edit({
+      content: `🧐 Fact-checking: "${statement}"`,
+      embeds: [embed],
+      components: []
+    });
+
+    const verdict = perplexityResult.verdict?.toLowerCase();
+    if (
+      notifyChannel &&
+      (verdict === "false" || verdict === "misleading")
+    ) {
+      await notifyChannel.send(`⚠️ Fact-check: Manual check detected a ${verdict} claim in <#${channel.id}>.\nClaim: "${statement}"`);
+    }
+    return;
   }
   const pages = [];
+  let shouldAlert = false;
+  let verdictType = '';
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
     parts.forEach(p => {
       const norm = normalizeGoogleRating(r.rating);
+      if (["False", "Misleading"].includes(norm.verdict)) {
+        shouldAlert = true;
+        verdictType = norm.verdict;
+      }
       pages.push({
         claim: p,
         verdict: norm.verdict,
@@ -390,10 +411,11 @@ async function runFactCheck(statement, channel) {
     row.components.forEach(button => button.setDisabled(true));
     await msg.edit({ components: [row] });
   });
-}
 
-// ------------------------
-// Bot Startup
+  if (notifyChannel && shouldAlert) {
+    await notifyChannel.send(`⚠️ Fact-check: Manual check detected a ${verdictType.toLowerCase()} claim in <#${channel.id}>.\nClaim: "${statement}"`);
+  }
+}
 // ------------------------
 (async () => {
   try {
