@@ -9,7 +9,6 @@ const {
 } = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
-
 // ------------------------
 // CONFIG
 // ------------------------
@@ -26,17 +25,26 @@ const cooldowns = {};
 const COOLDOWN_SECONDS = 10;
 const COMMANDS = ["!cap", "!fact", "!verify"];
 
-const WATCHED_USER_IDS = ["1236556523522752516"];      // Users to auto-scan
-const WATCHED_CHANNEL_IDS = ["1041130370273390603"];   // Channels to monitor
-const NOTIFY_CHANNEL_ID = "917154834321408022";        // Channel to notify on false/misleading claims
+// Updated merged lists
+const WATCHED_USER_IDS = [
+  "1236556523522752516",
+  "879691029274566727"
+];
 
-const NEGATION_WORDS = ["no", "not", "never", "none", "cannot", "didn't", "doesn't", "isn't", "wasn't", "aren't", "won't"];
+const WATCHED_CHANNEL_IDS = [
+  "1041130370273390603",
+  "1394635606729953394"
+];
+
+const NOTIFY_CHANNEL_IDS = [
+  "917154834321408022",
+  "1394558692568989869"
+];
 
 // ------------------------
 // Channel & user message buffers.
 // Structure: CHANNEL_BUFFERS[channelId][userId] = [messages...]
 const CHANNEL_BUFFERS = {};
-
 // ------------------------
 // Helpers for text processing
 const STOPWORDS = new Set([
@@ -44,14 +52,12 @@ const STOPWORDS = new Set([
   "it","an","be","are","was","were","has","have","had","but","or","not","no","if","then",
   "else","when","which","who","whom","where","how","what","why"
 ]);
-
 function extractKeywords(text) {
   text = text.toLowerCase();
-  text = text.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
+  text = text.replace(/[.,\/#!$%\^&*;:{}=\-_`~()]/g, "");
   let words = text.split(/\s+/);
   return words.filter(w => w && !STOPWORDS.has(w));
 }
-
 function similarityScore(aKeywords, bKeywords) {
   const setA = new Set(aKeywords);
   const setB = new Set(bKeywords);
@@ -60,9 +66,7 @@ function similarityScore(aKeywords, bKeywords) {
   if (avgLen === 0) return 0;
   return common.length / avgLen;
 }
-
 const SIMILARITY_THRESHOLD = 0.3;
-
 // Function to split long text into chunks
 function splitText(text, maxLength = 1000) {
   const parts = [];
@@ -172,18 +176,14 @@ function composeFactCheckEmbed(statement, results) {
 }
 // ------------------------
 const FACT_CHECK_INTERVAL_MS = 60 * 1000; // 1-minute interval
-
 setInterval(async () => {
   for (const [channelId, users] of Object.entries(CHANNEL_BUFFERS)) {
     for (const [userId, messages] of Object.entries(users)) {
       if (!messages || messages.length === 0) continue;
-
       const channel = await client.channels.fetch(channelId).catch(() => null);
       if (!channel) continue;
-
       const member = await channel.guild.members.fetch(userId).catch(() => null);
       const username = member ? member.user.username : `User ID: ${userId}`;
-
       // Process each buffered message separately
       for (const statement of messages) {
         const { results, error } = await factCheck(statement);
@@ -191,7 +191,6 @@ setInterval(async () => {
           console.error(`Fact-check error for user ${userId} in channel ${channelId}:`, error);
           continue;
         }
-
         if (!results || results.length === 0) {
           const perplexityResult = await queryPerplexity(statement);
           if (perplexityResult && (perplexityResult.verdict.toLowerCase() === "false" || perplexityResult.verdict.toLowerCase() === "misleading")) {
@@ -207,14 +206,17 @@ setInterval(async () => {
             if (perplexityResult.sources.length > 0) {
               embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
             }
-            const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
-            if (notifyChannel) {
-              const notifyAlertMsg = await notifyChannel.send({
-                content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
-                embeds: [embed]
-              });
-              await notifyAlertMsg.react('✅');
-              await notifyAlertMsg.react('❌');
+            // Send to all notify channels
+            for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+              const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
+              if (notifyChannel) {
+                const notifyAlertMsg = await notifyChannel.send({
+                  content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
+                  embeds: [embed]
+                });
+                await notifyAlertMsg.react('✅');
+                await notifyAlertMsg.react('❌');
+              }
             }
           }
         } else {
@@ -222,7 +224,6 @@ setInterval(async () => {
             const norm = normalizeGoogleRating(r.rating);
             return norm.verdict === "False" || norm.verdict === "Misleading";
           });
-
           if (falseOrMisleadingClaims.length > 0) {
             const pages = composeFactCheckEmbed(statement, falseOrMisleadingClaims);
             const r = pages[0];
@@ -238,26 +239,26 @@ setInterval(async () => {
                 { name: "Reviewed Date", value: r.date, inline: true }
               )
               .setTimestamp();
-
-            const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
-            if (notifyChannel) {
-              const notifyAlertMsg = await notifyChannel.send({
-                content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
-                embeds: [embed]
-              });
-              await notifyAlertMsg.react('✅');
-              await notifyAlertMsg.react('❌');
+            // Send to all notify channels
+            for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+              const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
+              if (notifyChannel) {
+                const notifyAlertMsg = await notifyChannel.send({
+                  content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
+                  embeds: [embed]
+                });
+                await notifyAlertMsg.react('✅');
+                await notifyAlertMsg.react('❌');
+              }
             }
           }
         }
       }
-
       // Clear the user's buffered messages after processing all individually
       CHANNEL_BUFFERS[channelId][userId] = [];
     }
   }
 }, FACT_CHECK_INTERVAL_MS);
-
 // ------------------------
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
@@ -274,7 +275,6 @@ client.on("messageCreate", async (message) => {
     cooldowns[message.author.id] = now;
     let statement = null;
     let claimAuthorId = message.author.id;
-
     if (message.reference) {
       try {
         const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -286,7 +286,6 @@ client.on("messageCreate", async (message) => {
         console.error("Failed to fetch replied-to message:", err);
       }
     }
-
     if (!statement) statement = message.content.slice(command.length).trim();
     if (!statement) return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
     await runFactCheck(statement, message.channel, claimAuthorId);
@@ -298,13 +297,10 @@ client.on("messageCreate", async (message) => {
     CHANNEL_BUFFERS[message.channel.id][message.author.id].push(message.content.trim());
   }
 });
-
 // ------------------------
 async function runFactCheck(statement, channel, claimAuthorId) {
   const sentMessage = await channel.send(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
   const { results, error } = await factCheck(statement);
-  const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
-
   if (error) {
     await sentMessage.edit(`🧐 Fact-checking: "${statement}"\n\n${error}`);
     return;
@@ -332,15 +328,19 @@ async function runFactCheck(statement, channel, claimAuthorId) {
       embeds: [embed],
       components: []
     });
-
     const verdict = perplexityResult.verdict?.toLowerCase();
     if (
-      notifyChannel &&
-      (verdict === "false" || verdict === "misleading")
+      verdict === "false" || verdict === "misleading"
     ) {
-      const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
-      await notifyAlertMsg.react('✅');
-      await notifyAlertMsg.react('❌');
+      // Send alert to all notify channels
+      for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+        const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
+        if (notifyChannel) {
+          const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
+          await notifyAlertMsg.react('✅');
+          await notifyAlertMsg.react('❌');
+        }
+      }
     }
     return;
   }
@@ -401,11 +401,16 @@ async function runFactCheck(statement, channel, claimAuthorId) {
     row.components.forEach(button => button.setDisabled(true));
     await msg.edit({ components: [row] });
   });
-
-  if (notifyChannel && shouldAlert) {
-    const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
-    await notifyAlertMsg.react('✅');
-    await notifyAlertMsg.react('❌');
+  if (shouldAlert) {
+    // Send alert to all notify channels
+    for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+      const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
+      if (notifyChannel) {
+        const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
+        await notifyAlertMsg.react('✅');
+        await notifyAlertMsg.react('❌');
+      }
+    }
   }
 }
 // ------------------------
