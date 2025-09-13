@@ -40,7 +40,6 @@ const NOTIFY_CHANNEL_IDS = [
   "917154834321408022",
   "1394558692568989869"
 ];
-
 // ------------------------
 // Channel & user message buffers.
 // Structure: CHANNEL_BUFFERS[channelId][userId] = [messages...]
@@ -214,7 +213,7 @@ setInterval(async () => {
                   content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
                   embeds: [embed]
                 });
-                await notifyAlertMsg.react('✅');
+                await notifyAlertMsg.react('🧢');
                 await notifyAlertMsg.react('❌');
               }
             }
@@ -247,7 +246,7 @@ setInterval(async () => {
                   content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
                   embeds: [embed]
                 });
-                await notifyAlertMsg.react('✅');
+                await notifyAlertMsg.react('🧢');
                 await notifyAlertMsg.react('❌');
               }
             }
@@ -337,7 +336,7 @@ async function runFactCheck(statement, channel, claimAuthorId) {
         const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
         if (notifyChannel) {
           const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
-          await notifyAlertMsg.react('✅');
+          await notifyAlertMsg.react('🧢');
           await notifyAlertMsg.react('❌');
         }
       }
@@ -407,7 +406,7 @@ async function runFactCheck(statement, channel, claimAuthorId) {
       const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
       if (notifyChannel) {
         const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
-        await notifyAlertMsg.react('✅');
+        await notifyAlertMsg.react('🧢');
         await notifyAlertMsg.react('❌');
       }
     }
