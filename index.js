@@ -27,8 +27,7 @@ const COMMANDS = ["!cap", "!fact", "!verify"];
 
 // Updated merged lists
 const WATCHED_USER_IDS = [
-  "1236556523522752516",
-  "879691029274566727"
+  "1236556523522752516"
 ];
 
 const WATCHED_CHANNEL_IDS = [
