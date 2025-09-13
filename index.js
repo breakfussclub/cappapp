@@ -174,7 +174,7 @@ function composeFactCheckEmbed(statement, results) {
   return pages;
 }
 // ------------------------
-const FACT_CHECK_INTERVAL_MS = 60 * 1000; // 1-minute interval
+const FACT_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour interval
 setInterval(async () => {
   for (const [channelId, users] of Object.entries(CHANNEL_BUFFERS)) {
     for (const [userId, messages] of Object.entries(users)) {
