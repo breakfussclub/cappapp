@@ -184,71 +184,74 @@ setInterval(async () => {
       const member = await channel.guild.members.fetch(userId).catch(() => null);
       const username = member ? member.user.username : `User ID: ${userId}`;
 
-      const combinedStatement = messages.join("\n");
-
-      const { results, error } = await factCheck(combinedStatement);
-      if (error) {
-        console.error(`Fact-check error for user ${userId} in channel ${channelId}:`, error);
-        continue;
-      }
-
-      if (!results || results.length === 0) {
-        const perplexityResult = await queryPerplexity(combinedStatement);
-        if (perplexityResult && (perplexityResult.verdict.toLowerCase() === "false" || perplexityResult.verdict.toLowerCase() === "misleading")) {
-          const embed = new EmbedBuilder()
-            .setColor(perplexityResult.color)
-            .setTitle(`Fact-Check Alert for ${username}`)
-            .addFields(
-              { name: "Claim", value: `> ${combinedStatement}` },
-              { name: "Verdict", value: perplexityResult.verdict },
-              { name: "Reasoning", value: perplexityResult.reason.slice(0, 1000) }
-            )
-            .setTimestamp();
-          if (perplexityResult.sources.length > 0) {
-            embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
-          }
-          await channel.send({
-            content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in recent messages.`,
-            embeds: [embed]
-          });
-          const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
-          if (notifyChannel) {
-            await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`);
-          }
+      // Process each buffered message separately
+      for (const statement of messages) {
+        const { results, error } = await factCheck(statement);
+        if (error) {
+          console.error(`Fact-check error for user ${userId} in channel ${channelId}:`, error);
+          continue;
         }
-      } else {
-        const falseOrMisleadingClaims = results.filter(r => {
-          const norm = normalizeGoogleRating(r.rating);
-          return norm.verdict === "False" || norm.verdict === "Misleading";
-        });
 
-        if (falseOrMisleadingClaims.length > 0) {
-          const pages = composeFactCheckEmbed(combinedStatement, falseOrMisleadingClaims);
-          const r = pages[0];
-          const embed = new EmbedBuilder()
-            .setColor(r.color)
-            .setTitle(`Fact-Check Alert for ${username}`)
-            .addFields(
-              { name: "Claim", value: `> ${r.claim}` },
-              { name: "Verdict", value: r.verdict, inline: true },
-              { name: "Original Rating", value: r.rating, inline: true },
-              { name: "Publisher", value: r.publisher, inline: true },
-              { name: "Source", value: `[Link](${r.url})` },
-              { name: "Reviewed Date", value: r.date, inline: true }
-            )
-            .setTimestamp();
-
-          await channel.send({
-            content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in recent messages.`,
-            embeds: [embed]
+        if (!results || results.length === 0) {
+          const perplexityResult = await queryPerplexity(statement);
+          if (perplexityResult && (perplexityResult.verdict.toLowerCase() === "false" || perplexityResult.verdict.toLowerCase() === "misleading")) {
+            const embed = new EmbedBuilder()
+              .setColor(perplexityResult.color)
+              .setTitle(`Fact-Check Alert for ${username}`)
+              .addFields(
+                { name: "Claim", value: `> ${statement}` },
+                { name: "Verdict", value: perplexityResult.verdict },
+                { name: "Reasoning", value: perplexityResult.reason.slice(0, 1000) }
+              )
+              .setTimestamp();
+            if (perplexityResult.sources.length > 0) {
+              embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
+            }
+            await channel.send({
+              content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}>.`,
+              embeds: [embed]
+            });
+            const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
+            if (notifyChannel) {
+              await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`);
+            }
+          }
+        } else {
+          const falseOrMisleadingClaims = results.filter(r => {
+            const norm = normalizeGoogleRating(r.rating);
+            return norm.verdict === "False" || norm.verdict === "Misleading";
           });
 
-          const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
-          if (notifyChannel) {
-            await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`);
+          if (falseOrMisleadingClaims.length > 0) {
+            const pages = composeFactCheckEmbed(statement, falseOrMisleadingClaims);
+            const r = pages[0];
+            const embed = new EmbedBuilder()
+              .setColor(r.color)
+              .setTitle(`Fact-Check Alert for ${username}`)
+              .addFields(
+                { name: "Claim", value: `> ${r.claim}` },
+                { name: "Verdict", value: r.verdict, inline: true },
+                { name: "Original Rating", value: r.rating, inline: true },
+                { name: "Publisher", value: r.publisher, inline: true },
+                { name: "Source", value: `[Link](${r.url})` },
+                { name: "Reviewed Date", value: r.date, inline: true }
+              )
+              .setTimestamp();
+
+            await channel.send({
+              content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}>.`,
+              embeds: [embed]
+            });
+
+            const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
+            if (notifyChannel) {
+              await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`);
+            }
           }
         }
       }
+
+      // Clear the user's buffered messages after processing all individually
       CHANNEL_BUFFERS[channelId][userId] = [];
     }
   }
