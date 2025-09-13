@@ -207,18 +207,15 @@ setInterval(async () => {
             if (perplexityResult.sources.length > 0) {
               embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
             }
-            const alertMsg = await channel.send({
-              content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}>.`,
-              embeds: [embed]
-            });
             const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
             if (notifyChannel) {
-              const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`);
+              const notifyAlertMsg = await notifyChannel.send({
+                content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
+                embeds: [embed]
+              });
               await notifyAlertMsg.react('✅');
               await notifyAlertMsg.react('❌');
             }
-            await alertMsg.react('✅');
-            await alertMsg.react('❌');
           }
         } else {
           const falseOrMisleadingClaims = results.filter(r => {
@@ -242,19 +239,15 @@ setInterval(async () => {
               )
               .setTimestamp();
 
-            const alertMsg = await channel.send({
-              content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}>.`,
-              embeds: [embed]
-            });
-
             const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
             if (notifyChannel) {
-              const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`);
+              const notifyAlertMsg = await notifyChannel.send({
+                content: `⚠️ Fact-check alert: False or misleading claims detected from <@${userId}> in <#${channelId}>.`,
+                embeds: [embed]
+              });
               await notifyAlertMsg.react('✅');
               await notifyAlertMsg.react('❌');
             }
-            await alertMsg.react('✅');
-            await alertMsg.react('❌');
           }
         }
       }
@@ -280,17 +273,23 @@ client.on("messageCreate", async (message) => {
     }
     cooldowns[message.author.id] = now;
     let statement = null;
+    let claimAuthorId = message.author.id;
+
     if (message.reference) {
       try {
         const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
-        if (repliedMessage) statement = repliedMessage.content.trim();
+        if (repliedMessage) {
+          statement = repliedMessage.content.trim();
+          claimAuthorId = repliedMessage.author.id;
+        }
       } catch (err) {
         console.error("Failed to fetch replied-to message:", err);
       }
     }
+
     if (!statement) statement = message.content.slice(command.length).trim();
     if (!statement) return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
-    await runFactCheck(statement, message.channel);
+    await runFactCheck(statement, message.channel, claimAuthorId);
     return;
   }
   if (isWatchedUser && isWatchedChannel) {
@@ -301,7 +300,7 @@ client.on("messageCreate", async (message) => {
 });
 
 // ------------------------
-async function runFactCheck(statement, channel) {
+async function runFactCheck(statement, channel, claimAuthorId) {
   const sentMessage = await channel.send(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
   const { results, error } = await factCheck(statement);
   const notifyChannel = await client.channels.fetch(NOTIFY_CHANNEL_ID).catch(() => null);
@@ -339,7 +338,7 @@ async function runFactCheck(statement, channel) {
       notifyChannel &&
       (verdict === "false" || verdict === "misleading")
     ) {
-      const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${channel.id}> in <#${channel.id}>.`);
+      const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
       await notifyAlertMsg.react('✅');
       await notifyAlertMsg.react('❌');
     }
@@ -404,7 +403,7 @@ async function runFactCheck(statement, channel) {
   });
 
   if (notifyChannel && shouldAlert) {
-    const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${channel.id}> in <#${channel.id}>.`);
+    const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
     await notifyAlertMsg.react('✅');
     await notifyAlertMsg.react('❌');
   }
