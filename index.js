@@ -25,6 +25,11 @@ const cooldowns = {};
 const COOLDOWN_SECONDS = 10;
 const COMMANDS = ["!cap", "!fact", "!verify"];
 
+const AUTHORIZED_USER_IDS = [
+  "306197826575138816" // Add authorized user IDs here
+];
+const MOD_ROLE_ID = "1410526844318388336";
+
 const WATCHED_USER_IDS = [
   "1236556523522752516",
   "879691029274566727"
@@ -178,7 +183,7 @@ setInterval(async () => {
   for (const [channelId, users] of Object.entries(CHANNEL_BUFFERS)) {
     // Skip processing buffers in channels not watched
     if (!WATCHED_CHANNEL_IDS.includes(channelId)) continue;
-    
+
     for (const [userId, messages] of Object.entries(users)) {
       if (!messages || messages.length === 0) continue;
       const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -263,18 +268,21 @@ setInterval(async () => {
 // ------------------------
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
-  if (!WATCHED_CHANNEL_IDS.includes(message.channel.id)) return;
-  if (!WATCHED_USER_IDS.includes(message.author.id)) return;
 
   const member = message.member;
-  const isAuthorized = message.author.id === "306197826575138816" || member.roles.cache.has("1410526844318388336");
+  const isAuthorized = AUTHORIZED_USER_IDS.includes(message.author.id) || member.roles.cache.has(MOD_ROLE_ID);
+
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
-  if (command && isAuthorized) {
+  if (command) {
+    // Manual commands only allowed for authorized users (not watched users)
+    if (!isAuthorized) return;
+
     const now = Date.now();
     if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
       return message.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
     }
     cooldowns[message.author.id] = now;
+
     let statement = null;
     let claimAuthorId = message.author.id;
     if (message.reference) {
@@ -293,11 +301,13 @@ client.on("messageCreate", async (message) => {
     await runFactCheck(statement, message.channel, claimAuthorId);
     return;
   }
-  
-  // Buffer messages only if user and channel are watched
-  if (!CHANNEL_BUFFERS[message.channel.id]) CHANNEL_BUFFERS[message.channel.id] = {};
-  if (!CHANNEL_BUFFERS[message.channel.id][message.author.id]) CHANNEL_BUFFERS[message.channel.id][message.author.id] = [];
-  CHANNEL_BUFFERS[message.channel.id][message.author.id].push(message.content.trim());
+
+  // Buffer messages only from watched users in watched channels for auto-scan
+  if (WATCHED_CHANNEL_IDS.includes(message.channel.id) && WATCHED_USER_IDS.includes(message.author.id)) {
+    if (!CHANNEL_BUFFERS[message.channel.id]) CHANNEL_BUFFERS[message.channel.id] = {};
+    if (!CHANNEL_BUFFERS[message.channel.id][message.author.id]) CHANNEL_BUFFERS[message.channel.id][message.author.id] = [];
+    CHANNEL_BUFFERS[message.channel.id][message.author.id].push(message.content.trim());
+  }
 });
 // ------------------------
 async function runFactCheck(statement, channel, claimAuthorId) {
