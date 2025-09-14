@@ -9,9 +9,7 @@ const {
 } = require("discord.js");
 const fetch = require("node-fetch"); // npm install node-fetch@2
 const http = require("http");
-// ------------------------
-// CONFIG
-// ------------------------
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -19,8 +17,10 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+
 const GOOGLE_API_KEY = "AIzaSyC18iQzr_v8xemDMPhZc1UEYxK0reODTSc";
 const PERPLEXITY_API_KEY = "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";
+
 const cooldowns = {};
 const COOLDOWN_SECONDS = 10;
 const COMMANDS = ["!cap", "!fact", "!verify"];
@@ -40,27 +40,27 @@ const WATCHED_CHANNEL_IDS = [
   "1394635606729953394"
 ];
 
-const NOTIFY_CHANNEL_IDS = [
-  "917154834321408022",
-  "1394558692568989869"
-];
-// ------------------------
-// Channel & user message buffers.
-// Structure: CHANNEL_BUFFERS[channelId][userId] = [messages...]
+// Define notify channels by guild for proper server-specific alerts
+const SERVER_NOTIFY_CHANNELS = {
+  "SERVER_ID_1": ["917154834321408022", "1394558692568989869"],
+  // Add other servers and their notify channels here
+};
+
 const CHANNEL_BUFFERS = {};
-// ------------------------
-// Helpers for text processing
+
 const STOPWORDS = new Set([
   "the","and","is","in","at","of","a","to","for","on","with","as","by","that","this","from",
   "it","an","be","are","was","were","has","have","had","but","or","not","no","if","then",
   "else","when","which","who","whom","where","how","what","why"
 ]);
+
 function extractKeywords(text) {
   text = text.toLowerCase();
   text = text.replace(/[.,\/#!$%\^&*;:{}=\-_`~()]/g, "");
   let words = text.split(/\s+/);
   return words.filter(w => w && !STOPWORDS.has(w));
 }
+
 function similarityScore(aKeywords, bKeywords) {
   const setA = new Set(aKeywords);
   const setB = new Set(bKeywords);
@@ -69,8 +69,9 @@ function similarityScore(aKeywords, bKeywords) {
   if (avgLen === 0) return 0;
   return common.length / avgLen;
 }
+
 const SIMILARITY_THRESHOLD = 0.3;
-// Function to split long text into chunks
+
 function splitText(text, maxLength = 1000) {
   const parts = [];
   for (let i = 0; i < text.length; i += maxLength) {
@@ -78,6 +79,7 @@ function splitText(text, maxLength = 1000) {
   }
   return parts;
 }
+
 function normalizeGoogleRating(rating) {
   if (!rating) return { verdict: "Other", color: 0xffff00 };
   const r = rating.toLowerCase();
@@ -86,8 +88,7 @@ function normalizeGoogleRating(rating) {
   if (r.includes("misleading")) return { verdict: "Misleading", color: 0xffff00 };
   return { verdict: "Other", color: 0xffff00 };
 }
-// ------------------------
-// Google Fact Check query
+
 async function factCheck(statement) {
   const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(statement)}&key=${GOOGLE_API_KEY}`;
   try {
@@ -114,8 +115,7 @@ async function factCheck(statement) {
     return { error: "⚠️ An error occurred while contacting the Fact Check API." };
   }
 }
-// ------------------------
-// Perplexity Fallback
+
 async function queryPerplexity(statement) {
   const url = "https://api.perplexity.ai/chat/completions";
   const body = {
@@ -156,8 +156,7 @@ async function queryPerplexity(statement) {
     return null;
   }
 }
-// ------------------------
-// Compose embed for fact-check result similar to manual checks
+
 function composeFactCheckEmbed(statement, results) {
   const pages = [];
   results.forEach(r => {
@@ -177,20 +176,20 @@ function composeFactCheckEmbed(statement, results) {
   });
   return pages;
 }
-// ------------------------
-const FACT_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1-hour interval
+
+const FACT_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
 setInterval(async () => {
   for (const [channelId, users] of Object.entries(CHANNEL_BUFFERS)) {
-    // Skip processing buffers in channels not watched
     if (!WATCHED_CHANNEL_IDS.includes(channelId)) continue;
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel) continue;
+    const guildNotifyChannels = SERVER_NOTIFY_CHANNELS[channel.guild.id] || [];
 
     for (const [userId, messages] of Object.entries(users)) {
       if (!messages || messages.length === 0) continue;
-      const channel = await client.channels.fetch(channelId).catch(() => null);
-      if (!channel) continue;
       const member = await channel.guild.members.fetch(userId).catch(() => null);
       const username = member ? member.user.username : `User ID: ${userId}`;
-      // Process each buffered message separately
       for (const statement of messages) {
         const { results, error } = await factCheck(statement);
         if (error) {
@@ -212,8 +211,7 @@ setInterval(async () => {
             if (perplexityResult.sources.length > 0) {
               embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
             }
-            // Send alert to all notify channels configured
-            for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+            for (const notifyChannelId of guildNotifyChannels) {
               const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
               if (notifyChannel) {
                 const notifyAlertMsg = await notifyChannel.send({
@@ -245,8 +243,7 @@ setInterval(async () => {
                 { name: "Reviewed Date", value: r.date, inline: true }
               )
               .setTimestamp();
-            // Send alert to all notify channels configured
-            for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+            for (const notifyChannelId of guildNotifyChannels) {
               const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
               if (notifyChannel) {
                 const notifyAlertMsg = await notifyChannel.send({
@@ -260,23 +257,19 @@ setInterval(async () => {
           }
         }
       }
-      // Clear the user's buffered messages after processing
       CHANNEL_BUFFERS[channelId][userId] = [];
     }
   }
 }, FACT_CHECK_INTERVAL_MS);
-// ------------------------
+
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
-
   const member = message.member;
   const isAuthorized = AUTHORIZED_USER_IDS.includes(message.author.id) || member.roles.cache.has(MOD_ROLE_ID);
-
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
-  if (command) {
-    // Manual commands only allowed for authorized users (not watched users)
-    if (!isAuthorized) return;
 
+  if (command) {
+    if (!isAuthorized) return;
     const now = Date.now();
     if (cooldowns[message.author.id] && now - cooldowns[message.author.id] < COOLDOWN_SECONDS * 1000) {
       return message.reply(`⏱ Please wait ${COOLDOWN_SECONDS} seconds between fact-checks.`);
@@ -285,31 +278,39 @@ client.on("messageCreate", async (message) => {
 
     let statement = null;
     let claimAuthorId = message.author.id;
+
     if (message.reference) {
       try {
         const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
-        if (repliedMessage) {
-          statement = repliedMessage.content.trim();
-          claimAuthorId = repliedMessage.author.id;
-        }
+        // Aggregate context: previous 3 messages before replied message + replied message + this command
+        const messagesAround = await message.channel.messages.fetch({ limit: 3, before: repliedMessage.id });
+        const sorted = messagesAround.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+        let combinedText = "";
+        sorted.forEach(msg => combinedText += msg.content + " ");
+        combinedText += repliedMessage.content + " ";
+        combinedText += message.content.slice(command.length).trim();
+        statement = combinedText.trim();
+        claimAuthorId = repliedMessage.author.id;
       } catch (err) {
-        console.error("Failed to fetch replied-to message:", err);
+        console.error("Failed to fetch messages for context:", err);
       }
     }
+
     if (!statement) statement = message.content.slice(command.length).trim();
     if (!statement) return message.reply("⚠️ Please provide a statement to fact-check. Example: `!cap The sky is green`");
+
     await runFactCheck(statement, message.channel, claimAuthorId);
     return;
   }
 
-  // Buffer messages only from watched users in watched channels for auto-scan
+  // Auto-buffer messages only from watched users in watched channels
   if (WATCHED_CHANNEL_IDS.includes(message.channel.id) && WATCHED_USER_IDS.includes(message.author.id)) {
     if (!CHANNEL_BUFFERS[message.channel.id]) CHANNEL_BUFFERS[message.channel.id] = {};
     if (!CHANNEL_BUFFERS[message.channel.id][message.author.id]) CHANNEL_BUFFERS[message.channel.id][message.author.id] = [];
     CHANNEL_BUFFERS[message.channel.id][message.author.id].push(message.content.trim());
   }
 });
-// ------------------------
+
 async function runFactCheck(statement, channel, claimAuthorId) {
   const sentMessage = await channel.send(`🧐 Fact-checking: "${statement}"\n\n⏳ Checking...`);
   const { results, error } = await factCheck(statement);
@@ -341,10 +342,9 @@ async function runFactCheck(statement, channel, claimAuthorId) {
       components: []
     });
     const verdict = perplexityResult.verdict?.toLowerCase();
-    if (
-      verdict === "false" || verdict === "misleading"
-    ) {
-      for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+    if (verdict === "false" || verdict === "misleading") {
+      const guildNotifyChannels = SERVER_NOTIFY_CHANNELS[channel.guild.id] || [];
+      for (const notifyChannelId of guildNotifyChannels) {
         const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
         if (notifyChannel) {
           const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
@@ -411,7 +411,8 @@ async function runFactCheck(statement, channel, claimAuthorId) {
     await msg.edit({ components: [row] });
   });
   if (shouldAlert) {
-    for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
+    const guildNotifyChannels = SERVER_NOTIFY_CHANNELS[channel.guild.id] || [];
+    for (const notifyChannelId of guildNotifyChannels) {
       const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
       if (notifyChannel) {
         const notifyAlertMsg = await notifyChannel.send(`⚠️ Fact-check alert: False or misleading claims detected from <@${claimAuthorId}> in <#${channel.id}>.`);
@@ -421,7 +422,7 @@ async function runFactCheck(statement, channel, claimAuthorId) {
     }
   }
 }
-// ------------------------
+
 (async () => {
   try {
     const token = process.env.DISCORD_TOKEN;
