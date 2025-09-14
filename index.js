@@ -25,9 +25,9 @@ const cooldowns = {};
 const COOLDOWN_SECONDS = 10;
 const COMMANDS = ["!cap", "!fact", "!verify"];
 
-// Updated merged lists
 const WATCHED_USER_IDS = [
-  "1236556523522752516"
+  "1236556523522752516",
+  "879691029274566727"
 ];
 
 const WATCHED_CHANNEL_IDS = [
@@ -173,9 +173,12 @@ function composeFactCheckEmbed(statement, results) {
   return pages;
 }
 // ------------------------
-const FACT_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour interval
+const FACT_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1-hour interval
 setInterval(async () => {
   for (const [channelId, users] of Object.entries(CHANNEL_BUFFERS)) {
+    // Skip processing buffers in channels not watched
+    if (!WATCHED_CHANNEL_IDS.includes(channelId)) continue;
+    
     for (const [userId, messages] of Object.entries(users)) {
       if (!messages || messages.length === 0) continue;
       const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -204,7 +207,7 @@ setInterval(async () => {
             if (perplexityResult.sources.length > 0) {
               embed.addFields({ name: "Sources", value: perplexityResult.sources.slice(0, 6).join("\n") });
             }
-            // Send to all notify channels
+            // Send alert to all notify channels configured
             for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
               const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
               if (notifyChannel) {
@@ -237,7 +240,7 @@ setInterval(async () => {
                 { name: "Reviewed Date", value: r.date, inline: true }
               )
               .setTimestamp();
-            // Send to all notify channels
+            // Send alert to all notify channels configured
             for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
               const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
               if (notifyChannel) {
@@ -252,7 +255,7 @@ setInterval(async () => {
           }
         }
       }
-      // Clear the user's buffered messages after processing all individually
+      // Clear the user's buffered messages after processing
       CHANNEL_BUFFERS[channelId][userId] = [];
     }
   }
@@ -260,10 +263,11 @@ setInterval(async () => {
 // ------------------------
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
+  if (!WATCHED_CHANNEL_IDS.includes(message.channel.id)) return;
+  if (!WATCHED_USER_IDS.includes(message.author.id)) return;
+
   const member = message.member;
   const isAuthorized = message.author.id === "306197826575138816" || member.roles.cache.has("1410526844318388336");
-  const isWatchedUser = WATCHED_USER_IDS.includes(message.author.id);
-  const isWatchedChannel = WATCHED_CHANNEL_IDS.includes(message.channel.id);
   const command = COMMANDS.find(cmd => message.content.toLowerCase().startsWith(cmd));
   if (command && isAuthorized) {
     const now = Date.now();
@@ -289,11 +293,11 @@ client.on("messageCreate", async (message) => {
     await runFactCheck(statement, message.channel, claimAuthorId);
     return;
   }
-  if (isWatchedUser && isWatchedChannel) {
-    if (!CHANNEL_BUFFERS[message.channel.id]) CHANNEL_BUFFERS[message.channel.id] = {};
-    if (!CHANNEL_BUFFERS[message.channel.id][message.author.id]) CHANNEL_BUFFERS[message.channel.id][message.author.id] = [];
-    CHANNEL_BUFFERS[message.channel.id][message.author.id].push(message.content.trim());
-  }
+  
+  // Buffer messages only if user and channel are watched
+  if (!CHANNEL_BUFFERS[message.channel.id]) CHANNEL_BUFFERS[message.channel.id] = {};
+  if (!CHANNEL_BUFFERS[message.channel.id][message.author.id]) CHANNEL_BUFFERS[message.channel.id][message.author.id] = [];
+  CHANNEL_BUFFERS[message.channel.id][message.author.id].push(message.content.trim());
 });
 // ------------------------
 async function runFactCheck(statement, channel, claimAuthorId) {
@@ -330,7 +334,6 @@ async function runFactCheck(statement, channel, claimAuthorId) {
     if (
       verdict === "false" || verdict === "misleading"
     ) {
-      // Send alert to all notify channels
       for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
         const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
         if (notifyChannel) {
@@ -344,14 +347,12 @@ async function runFactCheck(statement, channel, claimAuthorId) {
   }
   const pages = [];
   let shouldAlert = false;
-  let verdictType = '';
   results.forEach(r => {
     const parts = splitText(r.claim, 1000);
     parts.forEach(p => {
       const norm = normalizeGoogleRating(r.rating);
       if (["False", "Misleading"].includes(norm.verdict)) {
         shouldAlert = true;
-        verdictType = norm.verdict;
       }
       pages.push({
         claim: p,
@@ -400,7 +401,6 @@ async function runFactCheck(statement, channel, claimAuthorId) {
     await msg.edit({ components: [row] });
   });
   if (shouldAlert) {
-    // Send alert to all notify channels
     for (const notifyChannelId of NOTIFY_CHANNEL_IDS) {
       const notifyChannel = await client.channels.fetch(notifyChannelId).catch(() => null);
       if (notifyChannel) {
